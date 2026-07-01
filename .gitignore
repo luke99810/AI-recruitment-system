@@ -1,0 +1,75 @@
+# 环境变量
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.eggs/
+dist/
+build/
+
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# pip 缓存
+.pip-cache/
+pip-cache/
+
+# 会话数据
+sessions/*.json
+!sessions/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 大文件/模型
+lc-sp-offline-digital-human*/
+windows_cnenesr*/
+SDK/
+xtts_sdk/
+*.dll
+*.bin
+*.dat
+*.irf
+*.model
+
+# 测试简历 PDF (体积大)
+*.pdf
+test_resumes/*.pdf
+
+# Streamlit
+.streamlit/
+
+# 项目工作区
+.workbuddy/
+
+# 日志
+*.log
+
+# 输出目录
+output/
+outputs/
+*.zip
+*.tar.gz
+
+# Jupyter
+.ipynb_checkpoints/
+
+# pytest
+.pytest_cache/
+
+# mypy
+.mypy_cache/
