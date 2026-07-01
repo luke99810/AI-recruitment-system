@@ -9,8 +9,18 @@
   <img src="https://img.shields.io/badge/Framework-Streamlit-red.svg" alt="Streamlit">
   <img src="https://img.shields.io/badge/LLM-OpenAI_Compatible-green.svg" alt="LLM">
   <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License">
-  <img src="https://img.shields.io/badge/Status-Merged_v2.1-brightgreen.svg" alt="Status">
+  <img src="https://img.shields.io/badge/Status-Merged_v2.0-brightgreen.svg" alt="Status">
 </p>
+
+## 演示视频 🎬
+
+<p align="center">
+  <a href="https://github.com/luke99810/AI-recruitment-system/releases/download/v2.0.0-demo/Demo-Video.mp4">
+    <img src="https://img.shields.io/badge/⬇️ 下载演示视频-8A2BE2?style=for-the-badge" alt="下载演示视频">
+  </a>
+</p>
+
+> ⚠️ **备注**：由于电脑性能和网络卡顿，录制视频时略有加速，实际系统运行流畅。视频已压缩至 50MB 以内上传至 GitHub Releases。
 
 ---
 
@@ -371,12 +381,14 @@ Layer 3 — 重试层：指数退避重试（max 3 次）
 ### 安装
 
 ```bash
-# 1. 进入项目目录
-cd "D:\AI recruitment system"
+# 1. 克隆仓库
+git clone https://github.com/luke99810/AI-recruitment-system.git
+cd AI-recruitment-system
 
 # 2. 创建虚拟环境（推荐）
 python -m venv .venv
-.venv\Scripts\activate
+.venv\Scripts\activate  # Windows
+# source .venv/bin/activate  # macOS/Linux
 
 # 3. 配置环境变量
 cp .env.example .env
@@ -391,9 +403,11 @@ python run.py
 streamlit run app/main.py --server.port 8501
 ```
 
+启动后访问 `http://localhost:8501`。
+
 ### 使用流程
 
-**管理员端** (`http://127.0.0.1:8501`)：
+**管理员端**（`http://localhost:8501`）：
 1. **简历分析 Tab**：上传 JD + 简历 → "开始智能分析" → 查看匹配度/面试题/模糊点
 2. **生成面试链接**：点击 "📎 生成面试链接" → 复制链接发给候选人
 3. **自行测试（可选）**：点击 "🚀 自行测试面试" 在系统内模拟
