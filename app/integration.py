@@ -11,27 +11,66 @@ from .skills import SkillRegistry
 from .flywheel import FlywheelStore
 
 def render_skills_panel():
-    """Skills 管理面板"""
-    st.markdown("### Skills 管理")
+    """Skills 管理面板 — 浏览库 + 选择激活"""
+    st.markdown("### Skills 库")
     manager = SkillsManager(skills_dir=str(Path(__file__).parent / "skills"))
     skills_data = manager.load()
-    with st.expander(f"已加载 Skills ({skills_data.get('total', 0)}个)", expanded=False):
-        for skill in skills_data.get("skills", []):
-            icon = "[ON]" if skill["active"] else "[OFF]"
-            c1, c2 = st.columns([3, 1])
+    
+    all_skills = skills_data.get("skills", [])
+    active_skills = [s for s in all_skills if s["active"]]
+    inactive_skills = [s for s in all_skills if not s["active"]]
+    
+    # Quick stats
+    st.caption(f"{len(active_skills)} 已激活 / {len(inactive_skills)} 可用")
+    
+    # ── 已激活的 Skills ──
+    if active_skills:
+        st.markdown("**已激活**")
+        for skill in active_skills:
+            c1, c2, c3 = st.columns([2, 5, 1])
             with c1:
-                st.markdown(f"{icon} **{skill['name']}** `{skill['skill_id']}`")
-                st.caption(f"{skill.get('description', '')[:60]}")
-                st.caption(f"触发: `{skill['trigger']}`")
+                st.markdown(f"<span style='color:#10b981;font-weight:bold'>ON</span>", unsafe_allow_html=True)
             with c2:
-                if st.button("切换", key=f"sk_{skill['skill_id']}"):
-                    manager.toggle(skill["skill_id"], not skill["active"])
+                st.markdown(f"**{skill['name']}**  ")
+                st.caption(f"{skill.get('description', '')[:50]}")
+            with c3:
+                if st.button("✕", key=f"sk_off_{skill['skill_id']}", help="停用"):
+                    manager.toggle(skill["skill_id"], False)
                     st.rerun()
-    with st.expander("插入自定义 Skill", expanded=False):
-        sample = 'skill_id: "my-skill"\\nname: "My Skill"\\ncategory: "assessment"\\ntrigger: "on_question_generation"\\nactive: true'
-        yaml_text = st.text_area("Skill YAML", height=150, value=sample)
-        prompt_text = st.text_area("Prompt 模板", height=100, placeholder="你是招聘专家...")
-        if st.button("安装 Skill"):
+    
+    # ── 可用的 Skills 库 ──
+    if inactive_skills:
+        with st.expander(f"📚 可用 Skills ({len(inactive_skills)}个) — 按需激活", expanded=False):
+            # Group by category
+            cats = {}
+            for s in inactive_skills:
+                cat = s.get("category", "other")
+                cats.setdefault(cat, []).append(s)
+            
+            cat_names = {
+                "assessment": "📝 岗位题型", "screening": "🔍 筛选匹配", 
+                "negotiation": "💬 谈判沟通", "compliance": "🛡 合规审查"
+            }
+            
+            for cat, skills in cats.items():
+                st.caption(cat_names.get(cat, cat))
+                for skill in skills:
+                    c1, c2, c3 = st.columns([2, 5, 1])
+                    with c1:
+                        st.caption(skill["name"])
+                    with c2:
+                        st.caption(f"{skill.get('description', '')[:45]}...")
+                    with c3:
+                        if st.button("+", key=f"sk_on_{skill['skill_id']}", help="激活"):
+                            manager.toggle(skill["skill_id"], True)
+                            st.rerun()
+    
+    # ── 插入自定义 Skill ──
+    with st.expander("➕ 自定义 Skill", expanded=False):
+        sample = 'skill_id: "my-skill"\\nname: "My Skill"\\ncategory: "assessment"\\ntrigger: "on_question_generation"\\nactive: false'
+        yaml_text = st.text_area("Skill YAML", height=120, value=sample)
+        prompt_text = st.text_area("Prompt 模板", height=80, placeholder="你是招聘专家..."")
+        if st.button("📥 安装到库", use_container_width=True):
             try:
                 lines = yaml_text.strip().split('\\n')
                 sid = None
@@ -46,12 +85,12 @@ def render_skills_panel():
                         f.write(yaml_text)
                     with open(d / "prompt_template.txt", 'w', encoding='utf-8') as f:
                         f.write(prompt_text)
-                    st.success(f"Skill {sid} installed!")
+                    st.success(f"Skill {sid} 已加入库（默认关闭，需手动激活）")
                     st.rerun()
                 else:
-                    st.error("Cannot parse skill_id")
+                    st.error("无法解析 skill_id")
             except Exception as e:
-                st.error(f"Failed: {e}")
+                st.error(f"失败: {e}")
 
 def render_checker_panel(checker_results):
     """Checker 校准结果面板"""
