@@ -13,6 +13,19 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from app.config import settings
 from app.parser import parse_uploaded_file
 
+# ── New Architecture (v2.2): Harness/Graph/Checker/Skills/Flywheel ──
+try:
+    from app.integration import (
+        run_analysis_with_pipeline,
+        render_skills_panel,
+        render_checker_panel,
+        render_graph_panel,
+        render_flywheel_panel,
+    )
+    NEW_ARCH_ENABLED = True
+except Exception:
+    NEW_ARCH_ENABLED = False
+
 import nest_asyncio
 nest_asyncio.apply()
 
