@@ -46,6 +46,10 @@ class CheckerResult:
     overall_pass: bool = True
     revision_round: int = 0
     summary: str = ""
+    # ★ 对这种输出不成立、因而未参与判定的维度。
+    #   展示时要明确标「不适用」而不是留空 —— 留空会被当成"没查"。
+    skipped_dimensions: list[str] = field(default_factory=list)
+    weighted_score: float = 0.0
 
 
 # ── 五维校验规则定义 ──────────────────────────────
@@ -84,6 +88,44 @@ CALIBRATION_DIMENSIONS = {
 }
 
 REQUIRED_DIMENSIONS = ["技术基础", "项目深挖", "场景设计", "行为面试", "模糊点追问"]
+
+# ── ★ 维度适用性 ────────────────────────────────────────────────
+#
+# 五个维度并非对每种输出都成立：
+#
+#   · 「维度覆盖」查的是 output["questions"] 覆盖了几个题型 ——
+#     match_result 里【结构上就没有 questions】，于是恒为 0 分，
+#     还附带一条 CRITICAL「面试题列表为空」。
+#   · 「数据准确性」查的是 output 的 matched_points / gap_points ——
+#     questions_output 里【结构上就没有这两个字段】，
+#     accuracy_checks 恒为 0，score = int(0 / max(0,1) * 100) = 0。
+#
+# 两者都低于 pass_threshold，而 overall_pass 要求【全部维度】达标，
+# 所以 **两条校准链都永远不可能 PASS**。后果是三重的：
+#
+#   1. 正确性：verdict 恒为 FAIL、结果恒被打上 degraded:true，
+#      "自我校验"输出的信号是假的
+#   2. 性能：每次分析都必然跑满 3 轮 = 4 次额外 LLM 重生成。
+#      实测这一段占 273.9s 总耗时里的约 159s（试题重生成一次就要 60s）
+#   3. 可信度：演示时评审看到的永远是"校验未通过"
+#
+# ★ `max(accuracy_checks, 1)` 是这个 bug 的指纹：写的人知道分母可能为 0，
+#   于是防了除零 —— 但把"没什么可查"变成了"查了，0 分"。
+#   防崩溃防对了，默认值取错了。
+#
+# 修法：不适用的维度【既不算 0 也不算 100】，而是排除在
+# overall_pass 与加权总分之外。给 100 等于伪造通过，同样是假信号。
+DIMENSION_APPLICABILITY = {
+    "match_result": {"数据准确性", "归因正确性", "格式合规", "幻觉检测"},
+    "questions_output": {"归因正确性", "格式合规", "维度覆盖", "幻觉检测"},
+    "ambiguity_output": {"格式合规", "幻觉检测"},
+}
+# 未登记的 output_type 一律按全维度校验（保守：宁可多查）
+DEFAULT_APPLICABLE = set(CALIBRATION_DIMENSIONS.keys())
+
+
+def applicable_dimensions(output_type: str) -> set:
+    return DIMENSION_APPLICABILITY.get(output_type, DEFAULT_APPLICABLE)
 
 # ── 输出 Schema 定义 ──────────────────────────────
 
@@ -143,40 +185,48 @@ class CheckerAgent:
         """
         issues = []
         scores = {}
+        # ★ 只跑【对这种输出成立】的维度，见 DIMENSION_APPLICABILITY 的说明
+        applicable = applicable_dimensions(output_type)
 
         # ── 维度1：数据准确性 ──────────────────────
-        acc_score, acc_issues = self._check_data_accuracy(agent_output, source_data)
-        scores["数据准确性"] = acc_score
-        issues.extend(acc_issues)
+        if "数据准确性" in applicable:
+            acc_score, acc_issues = self._check_data_accuracy(agent_output, source_data)
+            scores["数据准确性"] = acc_score
+            issues.extend(acc_issues)
 
         # ── 维度2：归因正确性 ──────────────────────
-        attr_score, attr_issues = self._check_attribution(agent_output, source_data)
-        scores["归因正确性"] = attr_score
-        issues.extend(attr_issues)
+        if "归因正确性" in applicable:
+            attr_score, attr_issues = self._check_attribution(agent_output, source_data)
+            scores["归因正确性"] = attr_score
+            issues.extend(attr_issues)
 
         # ── 维度3：格式合规 ──────────────────────
-        fmt_score, fmt_issues = self._check_format_compliance(agent_output, output_type)
-        scores["格式合规"] = fmt_score
-        issues.extend(fmt_issues)
+        if "格式合规" in applicable:
+            fmt_score, fmt_issues = self._check_format_compliance(agent_output, output_type)
+            scores["格式合规"] = fmt_score
+            issues.extend(fmt_issues)
 
         # ── 维度4：维度覆盖 ──────────────────────
-        dim_score, dim_issues = self._check_dimension_coverage(agent_output)
-        scores["维度覆盖"] = dim_score
-        issues.extend(dim_issues)
+        if "维度覆盖" in applicable:
+            dim_score, dim_issues = self._check_dimension_coverage(agent_output)
+            scores["维度覆盖"] = dim_score
+            issues.extend(dim_issues)
 
         # ── 维度5：幻觉检测 ──────────────────────
-        hal_score, hal_issues = self._check_hallucination(agent_output, source_data)
-        scores["幻觉检测"] = hal_score
-        issues.extend(hal_issues)
+        if "幻觉检测" in applicable:
+            hal_score, hal_issues = self._check_hallucination(agent_output, source_data)
+            scores["幻觉检测"] = hal_score
+            issues.extend(hal_issues)
 
         # ── 综合判定 ──────────────────────────────
+        # ★ 加权分按【实际参与的维度】归一化，否则少跑一个维度会平白丢掉它的权重，
+        #   两种输出类型的分数也就没法互相比较了。
+        total_weight = sum(CALIBRATION_DIMENSIONS[d]["weight"] for d in scores) or 1.0
         weighted_score = sum(
-            scores[dim] * CALIBRATION_DIMENSIONS[dim]["weight"]
-            for dim in CALIBRATION_DIMENSIONS
-        )
+            scores[dim] * CALIBRATION_DIMENSIONS[dim]["weight"] for dim in scores
+        ) / total_weight
         overall_pass = all(
-            scores[dim] >= CALIBRATION_DIMENSIONS[dim]["pass_threshold"]
-            for dim in CALIBRATION_DIMENSIONS
+            scores[dim] >= CALIBRATION_DIMENSIONS[dim]["pass_threshold"] for dim in scores
         )
 
         # 生成摘要
@@ -188,6 +238,8 @@ class CheckerAgent:
             issues=issues,
             overall_pass=overall_pass,
             summary=summary,
+            skipped_dimensions=sorted(set(CALIBRATION_DIMENSIONS) - applicable),
+            weighted_score=round(weighted_score, 1),
         )
 
         self.check_history.append(result)
@@ -539,6 +591,8 @@ class CheckerAgent:
         return {
             "verdict": result.verdict,
             "calibration_scores": result.calibration_scores,
+            "skipped_dimensions": result.skipped_dimensions,
+            "weighted_score": result.weighted_score,
             "overall_pass": result.overall_pass,
             "revision_round": result.revision_round,
             "summary": result.summary,

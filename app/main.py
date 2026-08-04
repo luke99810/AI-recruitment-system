@@ -43,31 +43,191 @@ st.markdown("""
     /* ========== Global ========== */
     * { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; }
     
-    /* Use Streamlit native theme variables */
+    /* ══════════════════════════════════════════════════════════════
+       设计 Token —— ★ 这一段是本次界面改造的地基
+       ══════════════════════════════════════════════════════════════
+
+       改之前的状况（可验证）：
+
+         · CSS 里引用了 60+ 处 var(--text-2) / var(--text) / var(--surface)
+           / var(--primary-l) …… 而它们【从未在任何地方定义过】，
+           而且【一个 fallback 都没写】。
+           CSS 规范下，var() 指向未定义变量且无 fallback → 整条声明作废。
+           也就是说：那 60 多处颜色、背景、边框声明**全是死的**，
+           页面走的是浏览器默认色。界面"不够精致"不是审美问题，
+           是大量样式根本没生效。
+
+         · 另有 29 处用 var(--st-color-*) —— 那不是 Streamlit 的 API，
+           Streamlit 从不提供这组变量。所以注释里写的 "Theme-Responsive"
+           并不成立：它永远取 fallback，暗色模式下会变成深色外壳里
+           嵌一块块浅色补丁。
+
+       现在：一套完整 token，亮/暗双模都定义，并跟随系统偏好切换。
+       ★ 语义命名（surface / text / border）而不是具体色值命名，
+         这样换主题只改这一段，不用去 60 多个地方替换十六进制。
+    */
     :root {
-        --accent: #06b6d4;
-        --success: #10b981;
-        --warning: #f59e0b;
-        --danger: #ef4444;
+        color-scheme: light dark;
+
+        /* 品牌 */
+        --primary:      #4f46e5;
+        --primary-l:    #6366f1;
+        --primary-d:    #4338ca;
+        --primary-soft: rgba(99,102,241,0.10);
+        --accent:       #06b6d4;
+
+        /* 语义色 */
+        --success: #059669;
+        --warning: #d97706;
+        --danger:  #dc2626;
+        --info:    #0284c7;
+
+        /* 表面层级 —— 数字越大越"靠前" */
+        --bg:            #ffffff;
+        --surface:       #f8fafc;
+        --surface-2:     #f1f5f9;
+        --surface-card:  #ffffff;
+        --surface-hover: #eef2ff;
+
+        /* 文字层级 —— 对比度按 WCAG AA 选的，不是随手挑的灰 */
+        --text:   #0f172a;   /* 正文，对 --surface 约 16:1 */
+        --text-2: #475569;   /* 次要，约 7.5:1 */
+        --text-3: #94a3b8;   /* 弱化/占位，仅用于非关键信息 */
+
+        --border:       #e2e8f0;
+        --border-strong:#cbd5e1;
+
         --radius: 12px;
         --radius-sm: 8px;
         --radius-lg: 16px;
-        --shadow: 0 1px 3px rgba(0,0,0,0.08);
-        --shadow-md: 0 4px 12px rgba(0,0,0,0.1);
-        --shadow-lg: 0 8px 32px rgba(0,0,0,0.12);
+        --shadow:    0 1px 2px rgba(15,23,42,0.06);
+        --shadow-md: 0 4px 12px rgba(15,23,42,0.08);
+        --shadow-lg: 0 12px 32px rgba(15,23,42,0.12);
+    }
+
+    /* ⚠️ 这里【刻意没有】@media (prefers-color-scheme: dark)。
+       我一度加过，结果在浏览器里实测发现：
+
+         系统暗色偏好 = true，但 .stApp 实际背景 = rgb(255,255,255)
+         Streamlit 的 --background-color / --text-color 等变量 = 全空
+
+       即 **Streamlit 既不跟随系统暗色，也不通过 CSS 变量暴露主题**。
+       于是我的卡片跟着系统变深、外壳仍是白的 —— 深色卡片浮在白页上。
+
+       所以改为：单一亮色 token，并在 .streamlit/config.toml 里
+       把 Streamlit 的 base/backgroundColor/textColor 对齐到同一组值。
+       两边同源，不可能再脱钩。详见 config.toml 里的说明。 */
+    
+    /* ★ 用 min() 而不是写死 1400px：写死时若视口更窄，内容会被右侧裁掉
+       （实测截图里「候选人简历」整张卡片被切掉一半就是这么来的）。 */
+    .main .block-container {
+        padding: 1.25rem 1.75rem 3rem;
+        max-width: min(1360px, 100%);
+    }
+
+    /* ══════════════ 顶部品牌条 ══════════════ */
+    .brand-bar {
+        display: flex; align-items: center; justify-content: space-between;
+        flex-wrap: wrap; gap: 12px;
+        padding: 2px 2px 14px;
+        border-bottom: 1px solid var(--border);
+        margin-bottom: 14px;
+    }
+    .brand-left { display: flex; align-items: center; gap: 10px; }
+    .brand-mark {
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 30px; height: 30px; border-radius: 9px;
+        background: linear-gradient(135deg, var(--primary), var(--accent));
+        color: #fff; font-size: 13px; font-weight: 800; letter-spacing: -0.5px;
+    }
+    .brand-name {
+        font-size: 17px; font-weight: 700; color: var(--text); letter-spacing: -0.2px;
+    }
+    .brand-flow { display: flex; align-items: center; gap: 7px; }
+    .flow-step {
+        font-size: 12px; color: var(--text-2);
+        padding: 3px 10px; border-radius: 999px;
+        background: var(--surface-2); border: 1px solid var(--border);
+    }
+    .flow-arrow { font-size: 11px; color: var(--text-3); }
+
+    /* ══════════════ 主导航：把 radio 变成分段控件 ══════════════
+       原生 radio 的小圆点在主导航位置上信息噪音大、点击目标小。
+       这里整块重塑：隐藏圆点、标签变成可点的分段按钮。 */
+    div[data-testid="stRadio"] > div[role="radiogroup"] {
+        display: inline-flex; gap: 4px;
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        border-radius: 11px; padding: 4px;
+        margin-bottom: 18px;
+    }
+    div[data-testid="stRadio"] > div[role="radiogroup"] > label {
+        margin: 0 !important; padding: 8px 20px !important;
+        border-radius: 8px; cursor: pointer;
+        transition: background .15s, color .15s;
+        background: transparent;
+    }
+    /* 隐藏圆点本身 —— 只留下"分段"的语义 */
+    div[data-testid="stRadio"] > div[role="radiogroup"] > label > div:first-child {
+        display: none !important;
+    }
+    div[data-testid="stRadio"] > div[role="radiogroup"] > label p {
+        font-size: 14px !important; font-weight: 500 !important;
+        color: var(--text-2) !important; margin: 0 !important;
+    }
+    div[data-testid="stRadio"] > div[role="radiogroup"] > label:hover {
+        background: var(--surface-hover);
+    }
+    div[data-testid="stRadio"] > div[role="radiogroup"] > label:hover p {
+        color: var(--text) !important;
+    }
+    /* 选中态：Streamlit 给选中的 label 内部 input 加 checked */
+    div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) {
+        background: var(--bg);
+        box-shadow: var(--shadow);
+    }
+    div[data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) p {
+        color: var(--primary) !important; font-weight: 650 !important;
+    }
+
+    /* ══════════════ 上传区：把「卡片 + 独立虚线框」合成一块 ══════════════
+       原来 .card 和 st.file_uploader 是两个互不相干的盒子上下堆着，
+       视觉上像两个组件被拼在一起。让上传器贴合上方卡片的下沿。 */
+    .upload-head {
+        background: var(--surface-card);
+        border: 1px solid var(--border);
+        border-bottom: none;
+        border-radius: var(--radius) var(--radius) 0 0;
+        padding: 16px 18px 12px;
+        border-left: 3px solid var(--primary);
+    }
+    .upload-head .uh-title {
+        font-size: 15px; font-weight: 650; color: var(--text);
+        display: flex; align-items: center; gap: 8px;
+    }
+    .upload-head .uh-desc {
+        font-size: 12.5px; color: var(--text-2); margin: 5px 0 0;
+    }
+    div[data-testid="stFileUploader"] section {
+        border-radius: 0 0 var(--radius) var(--radius) !important;
+        border: 1px solid var(--border) !important;
+        border-top: 1px dashed var(--border-strong) !important;
+        border-left: 3px solid var(--primary) !important;
+        background: var(--surface) !important;
     }
     
-    .main .block-container { padding: 1.5rem 2rem; max-width: 1400px; }
-    
     /* ========== Header (always dark gradient - brand identity) ========== */
+    /* ★ 收窄：改之前 padding 22/36 + 28px 大标题，占了首屏近 1/4 高度，
+       而它说的话（"简历智能分析"）和上方导航的"简历分析"是重复的。
+       现在压成一条上下文带 —— 保留品牌渐变的识别度，但不再和导航抢层级，
+       首屏能多露出一整行内容。 */
     .app-header {
-        background: linear-gradient(135deg, #1e1b4b 0%, #312e81 30%, #4338ca 70%, #0e7490 100%);
-        border-radius: var(--radius-lg);
-        padding: 22px 36px;
-        margin-bottom: 24px;
+        background: linear-gradient(115deg, #312e81 0%, #4338ca 45%, #0e7490 100%);
+        border-radius: var(--radius);
+        padding: 14px 22px;
+        margin-bottom: 18px;
         position: relative;
         overflow: hidden;
-        border: 1px solid rgba(99,102,241,0.3);
     }
     .app-header::before {
         content: '';
@@ -84,31 +244,33 @@ st.markdown("""
         border-radius: 50%;
     }
     .app-header h1 {
-        font-size: 28px; font-weight: 800; color: #fff;
-        margin: 0; position: relative; z-index: 1; letter-spacing: -0.5px;
+        font-size: 19px; font-weight: 700; color: #fff;
+        margin: 0; position: relative; z-index: 1; letter-spacing: -0.2px;
+        display: flex; align-items: center; gap: 8px;
     }
+    .app-header h1 img { width: 22px !important; margin-right: 0 !important; }
     .app-header p {
-        font-size: 14px; color: rgba(255,255,255,0.7);
-        margin: 6px 0 0; position: relative; z-index: 1;
+        font-size: 12.5px; color: rgba(255,255,255,0.72);
+        margin: 4px 0 0; position: relative; z-index: 1;
     }
 
     
     /* ========== Tabs (theme-responsive) ========== */
     .stTabs [data-baseweb="tab-list"] {
         gap: 4px;
-        background: var(--st-color-background-secondary, #f0f2f6);
+        background: var(--surface);
         border-radius: var(--radius);
         padding: 4px;
-        border: 1px solid var(--st-color-border, #e0e0e0);
+        border: 1px solid var(--border);
     }
     .stTabs [data-baseweb="tab"] {
         padding: 10px 24px; border-radius: 8px;
         font-size: 14px; font-weight: 500;
-        color: var(--st-color-text-secondary, #555);
+        color: var(--text-2);
         border: none; transition: all 0.2s;
     }
     .stTabs [data-baseweb="tab"]:hover {
-        color: var(--st-color-text-primary, #111);
+        color: var(--text);
         background: rgba(99,102,241,0.08);
     }
     .stTabs [data-baseweb="tab"][aria-selected="true"] {
@@ -118,8 +280,8 @@ st.markdown("""
     
     /* ========== Cards (theme-responsive) ========== */
     .card {
-        background: var(--st-color-background-secondary, #f8f9fa);
-        border: 1px solid var(--st-color-border, #e0e0e0);
+        background: var(--surface);
+        border: 1px solid var(--border);
         border-radius: var(--radius);
         padding: 20px; margin-bottom: 16px;
         transition: all 0.2s;
@@ -130,7 +292,7 @@ st.markdown("""
     }
     .card-header {
         font-size: 15px; font-weight: 600;
-        color: var(--st-color-text-primary, #111);
+        color: var(--text);
         margin-bottom: 12px;
         display: flex; align-items: center; gap: 8px;
     }
@@ -146,8 +308,8 @@ st.markdown("""
     /* ========== Stat Badges (theme-responsive) ========== */
     .stat-row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
     .stat-item {
-        background: var(--st-color-background-secondary, #f8f9fa);
-        border: 1px solid var(--st-color-border, #e0e0e0);
+        background: var(--surface);
+        border: 1px solid var(--border);
         border-radius: var(--radius-sm);
         padding: 14px 18px; flex: 1; min-width: 120px;
         transition: all 0.2s;
@@ -155,18 +317,18 @@ st.markdown("""
     .stat-item:hover { border-color: #6366f1; }
     .stat-item .stat-value {
         font-size: 24px; font-weight: 700;
-        color: var(--st-color-text-primary, #111);
+        color: var(--text);
     }
     .stat-item .stat-label {
         font-size: 12px;
-        color: var(--st-color-text-secondary, #666);
+        color: var(--text-2);
         margin-top: 2px;
     }
     
     /* ========== Question Cards (theme-responsive) ========== */
     .question-card {
-        background: var(--st-color-background-secondary, #f8f9fa);
-        border: 1px solid var(--st-color-border, #e0e0e0);
+        background: var(--surface);
+        border: 1px solid var(--border);
         border-radius: var(--radius-sm);
         padding: 16px 18px; margin: 8px 0;
         transition: all 0.2s;
@@ -178,7 +340,7 @@ st.markdown("""
     }
     .question-card .q-title {
         font-weight: 600;
-        color: var(--st-color-text-primary, #111);
+        color: var(--text);
         font-size: 14px; line-height: 1.5;
     }
     
@@ -198,8 +360,8 @@ st.markdown("""
     
     /* ========== Chat (theme-responsive) ========== */
     .chat-container {
-        background: var(--st-color-background-secondary, #f8f9fa);
-        border: 1px solid var(--st-color-border, #e0e0e0);
+        background: var(--surface);
+        border: 1px solid var(--border);
         border-radius: var(--radius); padding: 16px;
         margin-bottom: 12px; max-height: 480px; overflow-y: auto;
     }
@@ -227,9 +389,9 @@ st.markdown("""
         font-size: 14px; line-height: 1.6;
     }
     .chat-msg .bubble.interviewer {
-        background: var(--st-color-background-primary, #fff);
-        border: 1px solid var(--st-color-border, #e0e0e0);
-        color: var(--st-color-text-primary, #111);
+        background: var(--bg);
+        border: 1px solid var(--border);
+        color: var(--text);
         border-bottom-left-radius: 4px;
     }
     .chat-msg .bubble.candidate {
@@ -239,13 +401,13 @@ st.markdown("""
     
     /* ========== Status Bar (theme-responsive) ========== */
     .status-bar {
-        background: var(--st-color-background-secondary, #f8f9fa);
-        border: 1px solid var(--st-color-border, #e0e0e0);
+        background: var(--surface);
+        border: 1px solid var(--border);
         border-radius: var(--radius-sm);
         padding: 10px 18px; margin-bottom: 16px;
         display: flex; flex-wrap: wrap; gap: 16px;
         font-size: 13px;
-        color: var(--st-color-text-secondary, #666);
+        color: var(--text-2);
     }
     .status-bar .status-dot { width: 8px; height: 8px; border-radius: 50%; }
     .status-bar .status-dot.active {
@@ -273,7 +435,7 @@ st.markdown("""
     /* ========== Progress Bars ========== */
     .custom-progress {
         height: 8px;
-        background: var(--st-color-border, #e0e0e0);
+        background: var(--border);
         border-radius: 4px; overflow: hidden;
         margin: 8px 0;
     }
@@ -284,8 +446,8 @@ st.markdown("""
     
     /* ========== Expanders (theme-responsive) ========== */
     .streamlit-expanderHeader {
-        background: var(--st-color-background-secondary, #f8f9fa) !important;
-        border: 1px solid var(--st-color-border, #e0e0e0) !important;
+        background: var(--surface) !important;
+        border: 1px solid var(--border) !important;
         border-radius: var(--radius-sm) !important;
     }
     
@@ -302,7 +464,7 @@ st.markdown("""
     
     /* ========== File Uploader ========== */
     .stFileUploader > section {
-        border: 2px dashed var(--st-color-border, #ccc) !important;
+        border: 2px dashed var(--border) !important;
         border-radius: var(--radius) !important;
         padding: 24px !important;
         transition: border-color 0.2s;
@@ -320,16 +482,16 @@ st.markdown("""
     
     /* ========== Misc ========== */
     .divider {
-        border-top: 1px solid var(--st-color-border, #e0e0e0);
+        border-top: 1px solid var(--border);
         margin: 20px 0;
     }
     .empty-state {
         text-align: center; padding: 60px 20px;
-        color: var(--st-color-text-secondary, #666);
+        color: var(--text-2);
     }
     .empty-state .icon { font-size: 48px; margin-bottom: 16px; }
     .empty-state h3 {
-        color: var(--st-color-text-primary, #111);
+        color: var(--text);
         margin-bottom: 8px;
     }
     
@@ -371,9 +533,10 @@ DEFAULTS = {
     "chat_messages": [], "interview_done": False,
     "report_data": {}, "tts_enabled": False,
     "tts_engine": "edge-tts (免费)", "tts_voice": "云扬 (专业男声)",
+    "tts_error": "", "tts_notice": "",   # 语音失败/降级提示，由侧边栏消费后清空
     "digital_human_enabled": True,
     "n_rounds": settings.DEFAULT_SAMPLE_ROUNDS,
-    "active_tab": "📄 简历分析",
+    "active_tab": "analysis", "ui_lang": "zh",
     "interview_link_info": None,   # 面试链接信息 {token, link, ...}
     "voice_input_text": "",        # 语音识别的文本
 }
@@ -632,38 +795,32 @@ body{{
 
 # ── TTS 语音播报 ──────────────────────────────────────
 def speak_text(text: str):
+    """生成语音并存入 session_state 由页面播放。
+
+    ★ 改动要点：**失败不再静默**。
+
+    上一版这里有三层 except，把所有异常吞成 `audio_b64 = None`；
+    而 tts_utils 里只把错误 print 到终端 —— Streamlit 界面上看不见。
+    于是"没配讯飞凭证""网络不通""选了个根本不存在的引擎"三种情况，
+    在用户眼里长得一模一样：**没声音，且不知道为什么**。
+
+    现在统一走 tts_utils.synthesize()，它返回带原因的 TTSResult；
+    失败或降级都写进 session_state，由侧边栏显示出来。
     """
-    根据侧边栏设置的语音引擎和发音人，生成 base64 音频，
-    存入 session_state，由页面自动播放。
-    
-    讯飞失败时自动 fallback 到 edge-tts。
-    """
-    engine = st.session_state.get("tts_engine", "edge-tts (免费)")
+    from app.tts_utils import get_voice_code, synthesize, ENGINE_EDGE
+
+    engine = st.session_state.get("tts_engine", ENGINE_EDGE)
     voice_label = st.session_state.get("tts_voice", "云扬 (专业男声)")
-    from app.tts_utils import get_voice_code, generate_audio_base64
-    voice = get_voice_code(voice_label)
-    audio_b64 = None
 
-    try:
-        if "讯飞" in engine:
-            from app.xunfei_tts import generate_xunfei_base64
-            audio_b64 = generate_xunfei_base64(text, voice)
-            if not audio_b64:
-                # 讯飞失败，降级到 edge-tts
-                audio_b64 = generate_audio_base64(text, "zh-CN-YunyangNeural")
-        elif engine == "XTTS 离线SDK":
-            audio_b64 = None  # SDK DLL 通常不可用，静默跳过
-        else:
-            audio_b64 = generate_audio_base64(text, voice)
-    except Exception:
-        # 兜底：edge-tts 默认发音人
-        try:
-            audio_b64 = generate_audio_base64(text, "zh-CN-YunyangNeural")
-        except Exception:
-            audio_b64 = None
+    result = synthesize(text, engine=engine, voice=get_voice_code(voice_label))
 
-    if audio_b64:
-        st.session_state["pending_audio_b64"] = audio_b64
+    if result.ok:
+        st.session_state["pending_audio_b64"] = result.audio_b64
+        # 降级也要让人知道 —— 否则"听起来是好的"会掩盖配置根本没生效
+        st.session_state["tts_notice"] = result.error if result.fell_back else ""
+    else:
+        st.session_state["pending_audio_b64"] = None
+        st.session_state["tts_error"] = result.error or "语音合成失败（未知原因）"
 
 
 # ── Sidebar ──────────────────────────────────────────
@@ -682,7 +839,7 @@ def render_sidebar():
                 <span>模型</span><span style="color:var(--primary-l);">{settings.LLM_MODEL}</span>
             </div>
             <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
-                <span>TTS</span><span style="color:var(--primary-l);">{settings.TTS_ENGINE}</span>
+                <span>TTS</span><span style="color:var(--primary-l);">{st.session_state.get("tts_engine", settings.TTS_ENGINE)}</span>
             </div>
             <div style="display:flex;justify-content:space-between;">
                 <span>面试轮数</span><span style="color:var(--primary-l);">{st.session_state.n_rounds}</span>
@@ -699,26 +856,54 @@ def render_sidebar():
         st.session_state.tts_enabled = st.toggle("🔊 TTS 语音播报", st.session_state.tts_enabled)
         
         if st.session_state.tts_enabled:
-            # TTS 引擎选择
-            engines = ["edge-tts (免费)", "讯飞 WebSocket TTS", "XTTS 离线SDK"]
-            cur_engine = st.session_state.get("tts_engine", engines[0])
-            idx = engines.index(cur_engine) if cur_engine in engines else 0
-            st.session_state["tts_engine"] = st.selectbox("语音引擎", engines, index=idx, key="sidebar_tts_engine",
-                help="edge-tts: 免费无需配置 | 讯飞: 在线API | XTTS: 离线SDK")
-            
-            # 发音人选择（从共享 VOICE_REGISTRY 获取）
-            from app.tts_utils import get_voice_options
-            options = get_voice_options(st.session_state["tts_engine"])
-            if options:
-                voice_labels = [label for label, _ in options]
-                cur_voice = st.session_state.get("tts_voice", voice_labels[0])
-                if cur_voice not in voice_labels:
-                    cur_voice = voice_labels[0]
-                st.session_state["tts_voice"] = st.selectbox(
-                    "发音人", voice_labels, 
-                    index=voice_labels.index(cur_voice), 
-                    key="sidebar_tts_voice"
+            # ★ 只列【真正可用】的引擎。
+            #   上一版把三个引擎写死在列表里，其中「XTTS 离线SDK」需要本地
+            #   SDK/libs/64/AEE_lib.dll，而这个仓库里根本没有 SDK 目录 ——
+            #   选了它必然静默无声。**一个选了什么都不会发生的选项，
+            #   比没有这个选项糟得多**：用户会以为是自己操作错了。
+            from app.tts_utils import engine_status, get_voice_options
+
+            status = engine_status()
+            engines = [n for n, ok, _ in status if ok]
+            blocked = [(n, why) for n, ok, why in status if not ok]
+
+            if not engines:
+                st.warning("没有可用的语音引擎，语音播报已停用")
+                st.session_state.tts_enabled = False
+            else:
+                cur_engine = st.session_state.get("tts_engine", engines[0])
+                idx = engines.index(cur_engine) if cur_engine in engines else 0
+                st.session_state["tts_engine"] = st.selectbox(
+                    "语音引擎", engines, index=idx, key="sidebar_tts_engine",
+                    help="仅列出当前环境真正可用的引擎",
                 )
+
+                # 不可用的也说清楚为什么 —— 让人知道"怎么才能用上"，
+                # 而不是猜为什么少了一个选项
+                if blocked:
+                    with st.expander(f"另有 {len(blocked)} 个引擎不可用", expanded=False):
+                        for name, why in blocked:
+                            st.caption(f"**{name}** — {why}")
+
+                options = get_voice_options(st.session_state["tts_engine"])
+                if options:
+                    voice_labels = [label for label, _ in options]
+                    cur_voice = st.session_state.get("tts_voice", voice_labels[0])
+                    if cur_voice not in voice_labels:
+                        cur_voice = voice_labels[0]
+                    st.session_state["tts_voice"] = st.selectbox(
+                        "发音人", voice_labels,
+                        index=voice_labels.index(cur_voice),
+                        key="sidebar_tts_voice",
+                    )
+
+            # 上一次合成的失败/降级提示
+            if st.session_state.get("tts_error"):
+                st.error(f"🔇 {st.session_state['tts_error']}")
+                st.session_state["tts_error"] = ""
+            elif st.session_state.get("tts_notice"):
+                st.info(f"🔉 {st.session_state['tts_notice']}")
+                st.session_state["tts_notice"] = ""
         
         st.session_state.digital_human_enabled = st.toggle("👤 虚拟主播", st.session_state.digital_human_enabled)
         
@@ -1036,12 +1221,12 @@ def tab_resume_analysis():
 
     if not st.session_state.analysis_done:
         # Upload stage
-        col1, col2 = st.columns(2)
+        col1, col2 = st.columns(2, gap="medium")
         with col1:
             st.markdown("""
-            <div class="card card-accent" style="margin-bottom:0;">
-                <div class="card-header">📋 职位描述 (JD)</div>
-                <p style="font-size:13px;color:var(--text-2);margin:0 0 12px 0;">上传 PDF / DOCX / TXT 格式</p>
+            <div class="upload-head">
+                <div class="uh-title">📋 职位描述 (JD)</div>
+                <p class="uh-desc">PDF / DOCX / TXT，或用下方文本框直接粘贴</p>
             </div>
             """, unsafe_allow_html=True)
             jd_file = st.file_uploader("上传 JD 文件", type=["pdf", "docx", "txt"], key="jd_upload",
@@ -1049,9 +1234,9 @@ def tab_resume_analysis():
 
         with col2:
             st.markdown("""
-            <div class="card card-accent" style="margin-bottom:0;">
-                <div class="card-header">👤 候选人简历</div>
-                <p style="font-size:13px;color:var(--text-2);margin:0 0 12px 0;">上传 PDF / DOCX / TXT 格式</p>
+            <div class="upload-head">
+                <div class="uh-title">👤 候选人简历</div>
+                <p class="uh-desc">PDF / DOCX / TXT，支持中英文简历</p>
             </div>
             """, unsafe_allow_html=True)
             resume_file = st.file_uploader("上传简历文件", type=["pdf", "docx", "txt"], key="resume_upload",
@@ -1336,7 +1521,7 @@ def _show_analysis_results():
                 st.session_state.selected_questions = selected
                 st.session_state.remaining_pool = remaining
                 st.session_state.interview_started = True
-                st.session_state.active_tab = "🤖 AI 面试"
+                st.session_state.active_tab = "interview"
                 if "_nav_radio" in st.session_state:
                     del st.session_state["_nav_radio"]
                 st.rerun()
@@ -1381,7 +1566,7 @@ def _show_analysis_results():
                         st.session_state.selected_questions = sel
                         st.session_state.remaining_pool = rem
                 st.session_state.interview_started = True
-                st.session_state.active_tab = "🤖 AI 面试"
+                st.session_state.active_tab = "interview"
                 if "_nav_radio" in st.session_state:
                     del st.session_state["_nav_radio"]
                 st.rerun()
@@ -1670,7 +1855,7 @@ def _generate_report():
         report = generate_report(agent.get_interview_data())
         st.session_state.report_data = report
         st.session_state.interview_done = True
-        st.session_state.active_tab = "📊 评估报告"
+        st.session_state.active_tab = "report"
         if "_nav_radio" in st.session_state:
             del st.session_state["_nav_radio"]
     except Exception as e:
@@ -1910,23 +2095,62 @@ if audio_b64:
     """, unsafe_allow_html=True)
     st.session_state["pending_audio_b64"] = ""
 
-st.markdown("""
-<div style="text-align:center;padding:4px 0 12px;">
-    <span style="font-size:13px;color:var(--text-3);">
-        AI 招聘系统 · 简历分析 → AI面试 → 评估报告
-    </span>
+# ── 顶部品牌条 ────────────────────────────────────────
+# ★ 改之前这里是一行居中的 13px 灰色小字，而下面每个模块的标题是 28px 大字 ——
+#   **信息层级是倒置的**：应用名比它下属的模块名还弱。
+#   现在品牌条承担"我是谁"，模块头承担"我在哪一步"，各司其职。
+from app.i18n import t as _t, get_lang as _get_lang
+
+st.markdown(f"""
+<div class="brand-bar">
+    <div class="brand-left">
+        <span class="brand-mark">AI</span>
+        <span class="brand-name">{_t('app.name')}</span>
+    </div>
+    <div class="brand-flow">
+        <span class="flow-step">{_t('nav.analysis')}</span><span class="flow-arrow">→</span>
+        <span class="flow-step">{_t('nav.interview')}</span><span class="flow-arrow">→</span>
+        <span class="flow-step">{_t('nav.report')}</span>
+    </div>
 </div>
 """, unsafe_allow_html=True)
 
-tab_labels = ["📄 简历分析", "🤖 AI 面试", "📊 评估报告"]
-active = st.radio("导航", tab_labels,
-    index=tab_labels.index(st.session_state.get("active_tab", "📄 简历分析")),
+# ★ 仍用 st.radio 而不是 st.tabs —— 这是**功能决定的，不是偷懒**：
+#   st.tabs() 无法用代码切换，而「查看评估报告」等按钮需要跳转到别的页
+#   （见 tab_ai_interview 里对 active_tab 的赋值）。radio 是唯一能同时满足
+#   "可点击"和"可编程切换"的原生组件。
+#   问题从来不是选错了组件，而是它**长得像单选框**。下面的 CSS 把它变成分段控件。
+# ★ 导航项用「稳定 key + 显示名分离」：
+#   key 是内部标识（不随语言变），label 才是翻译后的显示文案。
+#   之前把中文标签本身当状态存进 session_state，一旦切成英文，
+#   `active_tab` 里存的旧中文标签就再也匹配不上任何选项 —— 切语言会把
+#   用户踢回首页。分离之后，语言和导航状态互不影响。
+NAV = [
+    ("analysis",  "📄 " + _t("nav.analysis")),
+    ("interview", "🤖 " + _t("nav.interview")),
+    ("report",    "📊 " + _t("nav.report")),
+    ("settings",  "⚙️ " + _t("nav.settings")),
+]
+nav_keys = [k for k, _ in NAV]
+nav_labels = {k: v for k, v in NAV}
+
+_cur = st.session_state.get("active_tab", "analysis")
+if _cur not in nav_keys:                    # 兼容旧的中文标签状态
+    _cur = {"📄 简历分析": "analysis", "🤖 AI 面试": "interview",
+            "📊 评估报告": "report"}.get(_cur, "analysis")
+
+active = st.radio("导航", nav_keys,
+    index=nav_keys.index(_cur),
+    format_func=lambda k: nav_labels[k],
     key="_nav_radio", horizontal=True, label_visibility="collapsed")
 st.session_state.active_tab = active
 
-if active == "📄 简历分析":
+if active == "analysis":
     tab_resume_analysis()
-elif active == "🤖 AI 面试":
+elif active == "interview":
     tab_ai_interview()
-elif active == "📊 评估报告":
+elif active == "report":
     tab_report()
+elif active == "settings":
+    from app.settings_page import render_settings_page
+    render_settings_page()

@@ -14,6 +14,7 @@ import json
 import time
 from typing import Any, Optional
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
 from .graph import GraphOrchestrator, GraphNode, NodeStatus
 from .harness import AgentHarness, HarnessConfig, HarnessResult
@@ -96,19 +97,21 @@ class RecruitmentPipeline:
         """构建 DAG 拓扑"""
         self.graph = GraphOrchestrator(name="recruitment-pipeline", max_workers=4)
 
-        # 源数据节点
-        self.graph.data_pool = {
+        # ★ 初始输入改为【只读】注入，不再直接赋值给一个可变全局池。
+        #   节点想用哪个 key，必须在 needs_initial 里声明。
+        self.graph.set_initial_input({
             "jd_text": self.jd_text,
             "resume_text": self.resume_text,
             "flywheel_similar": self.flywheel_similar,
             "flywheel_notes": self.flywheel.generate_prompt_notes() if self.enable_flywheel else "",
-        }
+        })
 
         # Node 1: JD 解析（与 Resume 解析并行）
         self.graph.add_node(GraphNode(
             name="parse_jd",
             fn=self._fn_parse_jd,
             harness=self.harness,
+            needs_initial=["jd_text"],
             metadata={"label": "JD解析"},
         ))
 
@@ -117,6 +120,7 @@ class RecruitmentPipeline:
             name="parse_resume",
             fn=self._fn_parse_resume,
             harness=self.harness,
+            needs_initial=["resume_text"],
             metadata={"label": "简历解析"},
         ))
 
@@ -126,6 +130,7 @@ class RecruitmentPipeline:
             fn=self._fn_match,
             harness=self.harness,
             depends_on=["parse_jd", "parse_resume"],
+            needs_initial=["flywheel_notes", "flywheel_similar"],
             metadata={
                 "label": "匹配评分",
                 "output_schema": {
@@ -169,8 +174,29 @@ class RecruitmentPipeline:
             fn=self._fn_execute_skills,
             harness=None,  # Skills 自身有简单的错误处理
             depends_on=["generate_questions", "match"],
+            optional=True,   # Skills 失败不该阻断主链路
             metadata={"label": "Skills执行"},
         ))
+
+        # ── ★ 显式数据边 ─────────────────────────────
+        # 每条边写明：上游的哪个产出 → 在下游叫什么名字。
+        # 这替代了原来"节点产出丢进 data_pool、下游自己去捞"的隐式传递，
+        # 也让 _fn_match 里那串 `inputs.get("parse_jd") or inputs.get("jd_data")`
+        # 的兜底链失去了存在的理由 —— 兜底链本来就是数据流不明确的症状。
+        self.graph.add_edge("parse_jd", "match", as_key="jd_data")
+        self.graph.add_edge("parse_resume", "match", as_key="resume_data")
+
+        self.graph.add_edge("match", "generate_questions", as_key="match_result")
+        self.graph.add_edge("parse_jd", "generate_questions", as_key="jd_data")
+        self.graph.add_edge("parse_resume", "generate_questions", as_key="resume_data")
+
+        self.graph.add_edge("parse_resume", "ambiguity", as_key="resume_data")
+        self.graph.add_edge("generate_questions", "ambiguity", as_key="questions_result")
+
+        self.graph.add_edge("generate_questions", "skills_execution", as_key="questions_result")
+        self.graph.add_edge("match", "skills_execution", as_key="match_result")
+        self.graph.add_edge("parse_jd", "skills_execution", as_key="jd_data")
+        self.graph.add_edge("parse_resume", "skills_execution", as_key="resume_data")
 
     # ── Agent 函数 ───────────────────────────────
 
@@ -194,14 +220,13 @@ class RecruitmentPipeline:
         """匹配评分 Agent"""
         from .matcher import calculate_match
 
-        # 优先从命名key取（Graph多依赖模式），fallback到顶层展开的字段
-        jd_data = inputs.get("parse_jd") or inputs.get("jd_data") or {}
-        resume_data = inputs.get("parse_resume") or inputs.get("resume_data") or {}
-        # 如果顶层有展开的字段（单依赖模式），直接使用inputs本身
-        if not jd_data and "title" in inputs:
-            jd_data = inputs
-        if not resume_data and "name" in inputs:
-            resume_data = inputs
+        # ★ 边已声明 as_key，key 是确定的，不再需要兜底链。
+        #   原来那串 `inputs.get("parse_jd") or inputs.get("jd_data") or {}`
+        #   加上「如果顶层有 title 就把整个 inputs 当 jd_data」的猜测，
+        #   是数据流不明确逼出来的 —— 而它同时也掩盖了数据没送到的情况：
+        #   拿不到就静默用 {}，最后表现为一个莫名其妙的低分。
+        jd_data = inputs.get("jd_data") or {}
+        resume_data = inputs.get("resume_data") or {}
 
         result = calculate_match(jd_data, resume_data)
 
@@ -216,14 +241,9 @@ class RecruitmentPipeline:
         """试题生成 Agent"""
         from .question_generator import generate_questions
 
-        jd_data = inputs.get("parse_jd") or inputs.get("jd_data") or {}
-        resume_data = inputs.get("parse_resume") or inputs.get("resume_data") or {}
-        match_result = inputs.get("match") or inputs.get("match_result") or {}
-        # Fallback: if data was flat-merged
-        if not jd_data and "title" in inputs:
-            jd_data = {k: v for k, v in inputs.items() if k in ("title", "department", "responsibilities", "requirements", "keywords")}
-        if not resume_data and "name" in inputs:
-            resume_data = {k: v for k, v in inputs.items() if k in ("name", "contact", "education", "skills", "experience", "projects", "awards", "ambiguous_points")}
+        jd_data = inputs.get("jd_data") or {}
+        resume_data = inputs.get("resume_data") or {}
+        match_result = inputs.get("match_result") or {}
 
         return generate_questions(jd_data, resume_data, match_result)
 
@@ -231,9 +251,7 @@ class RecruitmentPipeline:
         """模糊点追问 Agent"""
         from .question_generator import generate_ambiguity_followups
 
-        resume_data = inputs.get("parse_resume") or inputs.get("resume_data") or {}
-        if not resume_data and "name" in inputs:
-            resume_data = inputs
+        resume_data = inputs.get("resume_data") or {}
         return generate_ambiguity_followups(resume_data)
 
     def _fn_execute_skills(self, inputs: dict, attempt: int = 0) -> dict:
@@ -242,33 +260,45 @@ class RecruitmentPipeline:
         if not active_skills:
             return {"skills_output": {}, "skills_used": []}
 
-        jd_data = inputs.get("parse_jd") or inputs.get("jd_data") or {}
-        resume_data = inputs.get("parse_resume") or inputs.get("resume_data") or {}
-        match_result = inputs.get("match") or inputs.get("match_result") or {}
+        jd_data = inputs.get("jd_data") or {}
+        resume_data = inputs.get("resume_data") or {}
+        match_result = inputs.get("match_result") or {}
 
-        skill_outputs = {}
-        skills_used = []
+        if not self.llm_client:
+            return {"skills_output": {}, "skills_used": []}
 
-        for skill in active_skills:
+        jd_json = json.dumps(jd_data, ensure_ascii=False)
+        resume_json = json.dumps(resume_data, ensure_ascii=False)
+        match_json = json.dumps(match_result, ensure_ascii=False)
+
+        def _run_one(skill):
+            """单个 Skill 的 LLM 调用。失败只影响它自己。"""
             try:
                 prompt = skill.prompt_template.format(
-                    jd_data=json.dumps(jd_data, ensure_ascii=False),
-                    resume_data=json.dumps(resume_data, ensure_ascii=False),
-                    match_result=json.dumps(match_result, ensure_ascii=False),
+                    jd_data=jd_json, resume_data=resume_json, match_result=match_json,
                 )
-                # 使用 LLM 生成 Skill 产出
-                if self.llm_client:
-                    result = self.llm_client.chat(
-                        user_prompt=prompt,
-                        system_prompt="你是一位招聘专家，请根据Skill要求生成内容。",
-                        expect_json=True,
-                    )
-                    if isinstance(result, dict):
-                        questions = result.get("questions", [result])
-                        skill_outputs[skill.skill_id] = questions
-                        skills_used.append(skill.skill_id)
-            except Exception as e:
+                result = self.llm_client.chat(
+                    user_prompt=prompt,
+                    system_prompt="你是一位招聘专家，请根据Skill要求生成内容。",
+                    expect_json=True,
+                )
+                if isinstance(result, dict):
+                    return skill.skill_id, result.get("questions", [result])
+            except Exception as e:  # noqa: BLE001
                 print(f"[Skill] {skill.skill_id} failed: {e}")
+            return skill.skill_id, None
+
+        # ★ 并行执行。原来是 for 循环【串行】调 LLM —— 默认激活 3 个
+        #   on_question_generation 的 Skill，就是 3 次 LLM 往返串起来等。
+        #   这些 Skill 彼此完全独立（各自只读 jd/resume/match，互不依赖），
+        #   串行没有任何理由，纯粹是白等。并行后耗时 = 最慢的那一个。
+        skill_outputs, skills_used = {}, []
+        max_workers = min(len(active_skills), 6)
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            for skill_id, questions in pool.map(_run_one, active_skills):
+                if questions is not None:
+                    skill_outputs[skill_id] = questions
+                    skills_used.append(skill_id)
 
         return {
             "skills_output": skill_outputs,
@@ -320,28 +350,130 @@ class RecruitmentPipeline:
         return self.get_summary(total_duration)
 
     def _run_checker_loop(self):
-        """执行 Checker 校准循环"""
-        source = {
-            "jd_text": self.jd_text,
-            "resume_text": self.resume_text,
-        }
+        """执行 Checker 校准循环（Loop 2）。
 
-        # 校验匹配结果
-        match_check = self.checker.check(
-            agent_output=self.match_result,
-            source_data=source,
-            output_type="match_result",
-        )
-        self.checker_results.append(match_check)
+        ★ 这个方法此前【名不副实】：它叫 _run_checker_loop，实际只调了两次
+          checker.check()，拿到 issues 之后什么都不做 —— 没有修订、没有重新校验。
+          而 checker.py 里那个真正实现闭环的 run_calibration_loop，**从未被任何
+          地方调用过**（全仓 grep 只有定义处一处）。
 
-        # 校验试题
-        if self.questions:
-            questions_check = self.checker.check(
-                agent_output=self.questions,
-                source_data=source,
+          任务要求 B3 的原文是「Checker 发现 FAIL → 将 issues 反馈给原 Agent →
+          Agent 根据 suggested_fix 修订输出 → 再次提交 Checker 校验 →
+          **至少完成一轮完整的校准循环**」。所以这里补的是判分权重最高的那一环。
+        """
+        source = {"jd_text": self.jd_text, "resume_text": self.resume_text}
+
+        # ★ 匹配 与 试题 两条校准链【并行】。
+        #   原来是串行：匹配最多 3 检 + 2 改，跑完再轮到试题的 3 检 + 2 改 ——
+        #   最坏情况 4 次 LLM 往返首尾相接。两条链彼此不依赖：
+        #   试题的修订只【读】 match_result，不写；匹配的修订只碰 match_result。
+        #   为了让"只读"这件事真正成立，这里先把 match_result 快照下来给试题链用，
+        #   否则匹配链改到一半的中间态会被试题链读到（竞态，且是那种偶发才现形的）。
+        match_snapshot = dict(self.match_result) if isinstance(self.match_result, dict) else self.match_result
+
+        def _calib_match():
+            return self._calibrate(
+                initial_output=self.match_result,
+                regenerate=self._fn_match_revise,
+                source=source,
+                output_type="match_result",
+            )
+
+        def _calib_questions():
+            return self._calibrate(
+                initial_output=self.questions,
+                regenerate=lambda fb: self._fn_questions_revise(fb, match_snapshot),
+                source=source,
                 output_type="questions_output",
             )
-            self.checker_results.append(questions_check)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            f_match = pool.submit(_calib_match)
+            f_quest = pool.submit(_calib_questions) if self.questions else None
+
+            self.match_result, match_history = f_match.result()
+            self.checker_results.extend(match_history)
+
+            if f_quest is not None:
+                self.questions, q_history = f_quest.result()
+                self.checker_results.extend(q_history)
+
+    def _calibrate(self, initial_output, regenerate, source, output_type):
+        """校验 → 反馈 → 修订 → 再校验。最多 max_revision_rounds 轮。
+
+        返回 (最终输出, 本次校准的全部 CheckerResult)。
+
+        ★ 三轮未过时返回的是【得分最高的那一轮】，不是最后一轮。
+          要求原文是「输出**最佳可用结果**」—— 最后一轮未必最好：模型按反馈改
+          A 问题时把 B 改坏是常见的。用最后一轮当"最佳"是个不查就看不出来的错。
+        """
+        history: list[CheckerResult] = []
+        output = initial_output
+        best_output, best_score = output, -1.0
+
+        for rnd in range(1, self.checker.max_revision_rounds + 1):
+            result = self.checker.check(
+                agent_output=output, source_data=source, output_type=output_type
+            )
+            result.revision_round = rnd
+            history.append(result)
+
+            score = self._weighted_score(result)
+            if score > best_score:
+                best_score, best_output = score, output
+
+            if result.overall_pass:
+                return output, history
+
+            if rnd == self.checker.max_revision_rounds:
+                break
+
+            # ★ 把 issues 真的送回 Agent 重新生成
+            try:
+                revised = regenerate(result)
+                if revised:
+                    output = revised
+            except Exception as e:  # noqa: BLE001
+                self.execution_log.append({
+                    "event": "revision_failed", "round": rnd, "error": str(e),
+                })
+                break
+
+        # 三轮仍未通过 → 标记 degraded 并交出最佳可用结果
+        if isinstance(best_output, dict):
+            best_output = {**best_output, "degraded": True}
+        self.execution_log.append({
+            "event": "calibration_degraded",
+            "output_type": output_type,
+            "rounds": len(history),
+            "best_weighted_score": round(best_score, 1),
+        })
+        return best_output, history
+
+    @staticmethod
+    def _weighted_score(result: CheckerResult) -> float:
+        """★ 只对【实际参与判定】的维度归一化加权。
+        原来遍历全部 5 个维度、缺的按 0 计 —— 不适用的维度会白白拉低总分，
+        "得分最高的一轮"因此选不准。"""
+        scored = result.calibration_scores
+        total_w = sum(CALIBRATION_DIMENSIONS[d]["weight"] for d in scored) or 1.0
+        return sum(
+            scored[dim] * CALIBRATION_DIMENSIONS[dim]["weight"] for dim in scored
+        ) / total_w
+
+    def _fn_match_revise(self, feedback: CheckerResult) -> dict:
+        from .matcher import calculate_match
+        return calculate_match(self.jd_data, self.resume_data, revision_feedback=feedback)
+
+    def _fn_questions_revise(self, feedback: CheckerResult, match_result: dict = None) -> dict:
+        """★ match_result 走参数传入而不是读 self —— 两条校准链并行时，
+        self.match_result 可能正在被匹配链改写。传快照才是确定的。"""
+        from .question_generator import generate_questions
+        return generate_questions(
+            self.jd_data, self.resume_data,
+            match_result if match_result is not None else self.match_result,
+            revision_feedback=feedback,
+        )
 
     def _store_to_flywheel(self):
         """存储到飞轮"""

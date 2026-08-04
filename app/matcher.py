@@ -47,9 +47,19 @@ def parse_resume(resume_text: str) -> dict:
     return result
 
 
-def calculate_match(jd_data: dict, resume_data: dict) -> dict:
+def calculate_match(
+    jd_data: dict,
+    resume_data: dict,
+    revision_feedback=None,
+    temperature: float = None,
+) -> dict:
     """
     计算匹配度评分。
+
+    Args:
+        revision_feedback: ★ Checker 的 CheckerResult。非空 → 进入修订模式，
+                           把 issues + suggested_fix 拼进 prompt 定点改。
+        temperature: 由 Harness 降级链传下来的温度。
 
     返回结构：
     {
@@ -62,15 +72,20 @@ def calculate_match(jd_data: dict, resume_data: dict) -> dict:
         "recommendation_reason": "..."
     }
     """
+    from .question_generator import build_revision_directive
+
     jd_json = json.dumps(jd_data, ensure_ascii=False, indent=2)
     resume_json = json.dumps(resume_data, ensure_ascii=False, indent=2)
 
-    prompt = MATCH_SCORE_PROMPT.format(jd_json=jd_json, resume_json=resume_json)
-    result = llm_client.chat(
-        user_prompt=prompt,
-        system_prompt=SYSTEM_PROMPT,
-        expect_json=True,
-    )
+    prompt = MATCH_SCORE_PROMPT.format(
+        jd_json=jd_json, resume_json=resume_json
+    ) + build_revision_directive(revision_feedback)
+
+    chat_kwargs = {"user_prompt": prompt, "system_prompt": SYSTEM_PROMPT, "expect_json": True}
+    if temperature is not None:
+        chat_kwargs["temperature"] = temperature
+
+    result = llm_client.chat(**chat_kwargs)
 
     if not isinstance(result, dict) or "overall_score" not in result:
         raise MatchError("匹配度评分结果格式异常")
