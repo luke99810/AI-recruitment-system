@@ -434,9 +434,12 @@ class SkillsManager:
 
     def __init__(self, skills_dir: str = None):
         self.registry = SkillRegistry(skills_dir)
+        self._loaded = False
 
     def load(self) -> dict:
-        self.registry.load_all()
+        if not self._loaded:
+            self.registry.load_all()
+            self._loaded = True
         return self.registry.to_dict()
 
     def insert(self, skill_id: str) -> dict:

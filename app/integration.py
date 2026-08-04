@@ -13,7 +13,10 @@ from .flywheel import FlywheelStore
 def render_skills_panel():
     """Skills 管理面板 — 浏览库 + 选择激活"""
     st.markdown("### Skills 库")
-    manager = SkillsManager(skills_dir=str(Path(__file__).parent / "skills"))
+    # Cache manager in session_state to persist toggle state across rerenders
+    if "_skills_manager" not in st.session_state:
+        st.session_state._skills_manager = SkillsManager(skills_dir=str(Path(__file__).parent / "skills"))
+    manager = st.session_state._skills_manager
     skills_data = manager.load()
     
     all_skills = skills_data.get("skills", [])
@@ -69,7 +72,7 @@ def render_skills_panel():
     with st.expander("➕ 自定义 Skill", expanded=False):
         sample = 'skill_id: "my-skill"\\nname: "My Skill"\\ncategory: "assessment"\\ntrigger: "on_question_generation"\\nactive: false'
         yaml_text = st.text_area("Skill YAML", height=120, value=sample)
-        prompt_text = st.text_area("Prompt 模板", height=80, placeholder="你是招聘专家..."")
+        prompt_text = st.text_area("Prompt 模板", height=80, placeholder="你是招聘专家...")
         if st.button("📥 安装到库", use_container_width=True):
             try:
                 lines = yaml_text.strip().split('\\n')
