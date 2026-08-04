@@ -1,5 +1,5 @@
-# AI 智能招聘系统 依赖
-# 合并自 AI-Interview Agent + AIOffer-Research
+# AI 智能招聘系统 v2.2 — 依赖
+# 五层架构: Harness / Graph DAG / Checker Loop / Skills / Flywheel
 streamlit>=1.28.0
 httpx>=0.27.0
 python-dotenv>=1.0.0
@@ -13,3 +13,4 @@ nest-asyncio>=1.5.0
 websocket-client>=1.8.0
 Pillow>=10.0.0
 # 可选：rapidocr-onnxruntime>=1.2.0  (OCR扫描件支持)
+# 可选：chromadb>=0.4.0                (向量数据库飞轮)

@@ -717,6 +717,11 @@ def render_sidebar():
                 st.session_state[key] = DEFAULTS[key]
             st.rerun()
         
+        # Skills Management (New Architecture)
+        if NEW_ARCH_ENABLED:
+            st.markdown("---")
+            render_skills_panel()
+        
         # Footer
         st.markdown(f"""
         <div style="position:fixed;bottom:20px;font-size:11px;color:var(--text-3);">
@@ -1074,31 +1079,54 @@ def _run_analysis(jd_file, jd_text_input, resume_file):
         st.error("请确保 JD 和简历内容不为空")
         return
 
-    with st.spinner("🎯 正在评估匹配度..."):
-        from app.matcher import run_match_pipeline
-        pipeline = run_match_pipeline(jd_text, resume_text)
-        if not pipeline.get("success"):
-            st.error(f"分析失败: {pipeline.get('error', '')}")
-            return
-        st.session_state.jd_data = pipeline.get("jd_data", {})
-        st.session_state.resume_data = pipeline.get("resume_data", {})
-        st.session_state.match_result = pipeline.get("match_result", {})
+    # Use new Graph-based pipeline if available
+    if NEW_ARCH_ENABLED:
+        with st.spinner("🚀 Graph Pipeline 执行中 (Harness + Checker + Skills)..."):
+            summary = run_analysis_with_pipeline(jd_text, resume_text)
+            if summary.get("success"):
+                st.session_state.analysis_done = True
+                st.rerun()
+            else:
+                st.error("分析失败，请检查 LLM API 配置")
+                return
+    else:
+        with st.spinner("🎯 正在评估匹配度..."):
+            from app.matcher import run_match_pipeline
+            pipeline = run_match_pipeline(jd_text, resume_text)
+            if not pipeline.get("success"):
+                st.error(f"分析失败: {pipeline.get('error', '')}")
+                return
+            st.session_state.jd_data = pipeline.get("jd_data", {})
+            st.session_state.resume_data = pipeline.get("resume_data", {})
+            st.session_state.match_result = pipeline.get("match_result", {})
 
-    with st.spinner("📝 正在生成面试题..."):
-        from app.question_generator import run_question_pipeline
-        qp = run_question_pipeline(
-            jd_data=st.session_state.jd_data,
-            resume_data=st.session_state.resume_data,
-            match_result=st.session_state.match_result,
-        )
-        if qp.get("success"):
-            st.session_state.all_questions = qp.get("questions", {}).get("questions", [])
-            st.session_state.ambiguity_followups = qp.get("ambiguity_followups", {})
-        else:
-            st.warning(f"试题生成部分异常: {qp.get('error', '')}")
+        with st.spinner("📝 正在生成面试题..."):
+            from app.question_generator import run_question_pipeline
+            qp = run_question_pipeline(
+                jd_data=st.session_state.jd_data,
+                resume_data=st.session_state.resume_data,
+                match_result=st.session_state.match_result,
+            )
+            if qp.get("success"):
+                st.session_state.all_questions = qp.get("questions", {}).get("questions", [])
+                st.session_state.ambiguity_followups = qp.get("ambiguity_followups", {})
+                st.session_state.analysis_done = True
+                st.rerun()
+            else:
+                st.error(f"试题生成失败: {qp.get('error', '')}")
+                st.info("请检查 LLM API 配置后重新点击分析")
+                return
 
-    st.session_state.analysis_done = True
+def _reset_analysis():
+    """销毁分析状态，回到上传页"""
+    for k in ("analysis_done", "match_result", "all_questions", "ambiguity_followups",
+              "jd_data", "resume_data", "jd_text", "resume_text",
+              "interview_link_info", "selected_questions", "remaining_pool",
+              "interview_started", "interviewer", "interview_done", "report_data",
+              "tab_radio", "_nav_radio"):
+        st.session_state.pop(k, None)
     st.rerun()
+
 
 def _show_analysis_results():
     """Display analysis results"""
@@ -1107,9 +1135,13 @@ def _show_analysis_results():
 
     # 防御：analysis_done=True 但数据丢失（比如服务重启后 session 残留）
     if not match or not isinstance(match, dict) or "overall_score" not in match:
-        st.warning("⚠️ 分析数据丢失，请重新上传文件分析。")
-        st.session_state.analysis_done = False
-        st.rerun()
+        _reset_analysis()
+        return
+
+    # 防御：match_result 存在但题库丢失 → 直接重置（依赖 LLM 恢复太脆弱）
+    if not questions:
+        st.warning("⚠️ 会话数据在服务重启后丢失，需重新分析。")
+        _reset_analysis()
         return
 
     # ── Stats Row ──
@@ -1340,6 +1372,28 @@ def _show_analysis_results():
                 if "_nav_radio" in st.session_state:
                     del st.session_state["_nav_radio"]
                 st.rerun()
+    # ── New Architecture Panels (Checker + Graph + Flywheel) ──
+    if NEW_ARCH_ENABLED:
+        with st.expander("🔍 Checker 校准详情", expanded=False):
+            checker_results = st.session_state.get("checker_results", [])
+            if checker_results:
+                render_checker_panel(checker_results)
+            else:
+                st.info("Checker 结果将在下次分析后显示")
+
+        with st.expander("🔀 Graph DAG 执行状态", expanded=False):
+            pipeline = st.session_state.get("_pipeline")
+            if pipeline:
+                render_graph_panel(pipeline)
+            else:
+                st.info("Graph 状态将在分析完成后显示")
+
+        with st.expander("🌀 飞轮统计 (Loop 3)", expanded=False):
+            render_flywheel_panel()
+
+        skills_used = st.session_state.get("skills_used", [])
+        if skills_used:
+            st.caption(f"🧩 已激活 Skills: {', '.join(skills_used)}")
 
 # ── Tab 2: AI Interview ─────────────────────────────
 def tab_ai_interview():
