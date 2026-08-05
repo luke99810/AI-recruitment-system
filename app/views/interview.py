@@ -6,27 +6,29 @@ components.v1 / 音频注入耦合），这里**通过参数注入**而不是反
 """
 import streamlit as st
 
+from app.i18n import t
 from app.ui import (
     empty_state, page_header, pill, progress_steps, question_card,
     score_color, section, stat_grid,
 )
 
-STEPS = ["上传材料", "智能分析", "AI 面试", "评估报告"]
+def _steps():
+    return [t("step.upload"), t("step.analyze"), t("step.interview"), t("step.report")]
 
 
 def render(render_digital_human=None, speak=None) -> None:
-    page_header("AI 模拟面试", "多维度追问 · 数字人交互 · 实时评估", "🤖")
+    page_header(t("interview.title"), t("interview.subtitle"), "🤖")
 
     if not st.session_state.get("analysis_done"):
-        progress_steps(STEPS, 0)
+        progress_steps(_steps(), 0)
         empty_state(
-            "请先完成简历分析",
-            "切换到「简历分析」，上传 JD 与简历后系统会自动生成面试题库",
+            t("interview.need_analysis"),
+            t("interview.need_analysis_desc"),
             "📄",
         )
         return
 
-    progress_steps(STEPS, 2)
+    progress_steps(_steps(), 2)
     if not st.session_state.get("interview_started"):
         _render_prep()
     else:
@@ -40,31 +42,28 @@ def _render_prep() -> None:
     score = match.get("overall_score", 0)
 
     stat_grid([
-        {"label": "目标岗位", "value": jd_title},
-        {"label": "题库总量", "value": f"{len(questions)} 道"},
-        {"label": "本次抽取", "value": f"{st.session_state.n_rounds} 道",
-         "hint": "可在左侧「设置」调整"},
-        {"label": "简历匹配度", "value": score, "color": score_color(score),
+        {"label": t("analysis.target_role"), "value": jd_title},
+        {"label": t("interview.qbank_total"), "value": t("analysis.q_count", n=len(questions))},
+        {"label": t("interview.sample_n"), "value": t("analysis.q_count", n=st.session_state.n_rounds),
+         "hint": t("interview.sample_hint")},
+        {"label": t("interview.match"), "value": score, "color": score_color(score),
          "hint": match.get("recommendation", "")},
     ])
 
     st.markdown("")
-    st.info(
-        f"系统将从 {len(questions)} 道题中随机抽取 {st.session_state.n_rounds} 道，"
-        "并根据你的回答实时追问。面试过程可随时结束并生成报告。"
-    )
+    st.info(t("interview.brief", total=len(questions), n=st.session_state.n_rounds))
 
-    with st.expander("题库预览", expanded=False):
+    with st.expander(t("interview.preview"), expanded=False):
         st.markdown(
             "".join(question_card(q, i + 1) for i, q in enumerate(questions[:9])),
             unsafe_allow_html=True,
         )
         if len(questions) > 9:
-            st.caption(f"另有 {len(questions) - 9} 道未展示")
+            st.caption(t("interview.preview_more", n=len(questions) - 9))
 
     _, mid, _ = st.columns([1, 2, 1])
     with mid:
-        if st.button("开始面试", type="primary", use_container_width=True):
+        if st.button(t("interview.start"), type="primary", use_container_width=True):
             from app.question_sampler import sample_questions_for_interview
             selected, remaining = sample_questions_for_interview(
                 questions, st.session_state.n_rounds)
@@ -78,7 +77,7 @@ def _render_active(render_digital_human, speak) -> None:
     from app.interviewer import InterviewerAgent, InterviewState
 
     if st.session_state.get("interviewer") is None:
-        with st.spinner("正在启动面试官…"):
+        with st.spinner(t("interview.booting")):
             try:
                 agent = InterviewerAgent(
                     max_rounds=len(st.session_state.selected_questions) + 2)
@@ -96,7 +95,7 @@ def _render_active(render_digital_human, speak) -> None:
                     speak(first_q)
                 st.rerun()
             except Exception as e:                    # noqa: BLE001
-                st.error(f"面试官初始化失败：{e}")
+                st.error(f'{t("interview.booting")} {e}')
                 st.stop()
 
     agent = st.session_state.interviewer
@@ -105,13 +104,16 @@ def _render_active(render_digital_human, speak) -> None:
 
     # ── 进度条 ────────────────────────────────
     pct = int(len(agent.turns) / agent.max_rounds * 100) if agent.max_rounds else 0
+    meta = " · ".join([
+        agent.persona.get("persona_name", "面试官"),
+        agent.jd_data.get("title", "—"),
+        t("interview.round", i=len(agent.turns), n=agent.max_rounds),
+    ])
     st.markdown(
-        f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">'
-        + pill("面试中" if not done else "已结束", "brand" if not done else "success")
-        + f'<span style="font-size:13px;color:var(--text-2)">'
-          f'{agent.persona.get("persona_name", "面试官")} · '
-          f'{agent.jd_data.get("title", "岗位")} · '
-          f'第 {len(agent.turns)}/{agent.max_rounds} 轮</span></div>'
+        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">'
+        + pill(t("interview.running") if not done else t("interview.ended"),
+               "brand" if not done else "success")
+        + f'<span style="font-size:13px;color:var(--text-2)">{meta}</span></div>'
         f'<div class="br-track" style="height:6px;margin-bottom:16px">'
         f'<div class="br-fill" style="width:{pct}%;background:var(--brand)"></div></div>',
         unsafe_allow_html=True,
@@ -126,13 +128,13 @@ def _render_active(render_digital_human, speak) -> None:
             render_digital_human(last, agent.persona.get("persona_name", "面试官"))
         st.markdown("")
         st.markdown(
-            f'<div class="kv"><span class="k">人格</span>'
+            f'<div class="kv"><span class="k">{t("interview.persona")}</span>'
             f'<span class="v">{agent.persona.get("persona_type", "balanced")}</span></div>'
-            f'<div class="kv"><span class="k">已覆盖维度</span>'
+            f'<div class="kv"><span class="k">{t("interview.covered")}</span>'
             f'<span class="v">{len(agent.covered_dimensions)}</span></div>'
-            f'<div class="kv"><span class="k">题库剩余</span>'
+            f'<div class="kv"><span class="k">{t("interview.remaining")}</span>'
             f'<span class="v">{len(agent.remaining_pool)}</span></div>'
-            f'<div class="kv"><span class="k">待覆盖</span>'
+            f'<div class="kv"><span class="k">{t("interview.pending")}</span>'
             f'<span class="v">{"、".join(agent.pending_dimensions[:2]) or "—"}</span></div>',
             unsafe_allow_html=True,
         )
@@ -148,10 +150,10 @@ def _render_active(render_digital_human, speak) -> None:
                 st.markdown(msg["content"])
 
         if not done:
-            answer = st.chat_input("输入你的回答…")
+            answer = st.chat_input(t("interview.input_ph"))
             if answer and answer.strip():
                 _handle_answer(answer.strip(), speak)
-            if st.button("结束面试", use_container_width=True):
+            if st.button(t("interview.end_btn"), use_container_width=True):
                 closing = agent._generate_closing()
                 st.session_state.chat_messages.append(
                     {"role": "interviewer", "content": closing})
@@ -159,8 +161,8 @@ def _render_active(render_digital_human, speak) -> None:
                 agent.state = InterviewState.REPORTING
                 st.rerun()
         else:
-            st.success("面试已结束")
-            if st.button("查看评估报告", type="primary", use_container_width=True):
+            st.success(t("interview.done_msg"))
+            if st.button(t("interview.view_report"), type="primary", use_container_width=True):
                 _generate_report()
 
 
@@ -169,7 +171,7 @@ def _handle_answer(text: str, speak) -> None:
     agent = st.session_state.interviewer
     st.session_state.chat_messages.append({"role": "candidate", "content": text})
 
-    with st.spinner("面试官思考中…"):
+    with st.spinner(t("interview.thinking")):
         result = agent.process_answer(text)
 
     msg = result.get("message", "")

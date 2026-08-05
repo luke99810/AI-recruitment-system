@@ -19,6 +19,7 @@ import streamlit as st
 
 from app.config import settings
 from app.parser import parse_uploaded_file
+from app.i18n import t
 from app.ui import (
     DIMENSION_COLORS, empty_state, evidence_list, kv_row, page_header, pill,
     progress_steps, question_card, score_bars, score_color, section, stat_grid,
@@ -34,21 +35,24 @@ try:
 except Exception:      # noqa: BLE001
     NEW_ARCH = False
 
-STEPS = ["上传材料", "智能分析", "AI 面试", "评估报告"]
+def _steps():
+    """★ 每次渲染时才取翻译 —— 模块级常量会在 import 时定死语言，
+    切换后不会跟着变（这是 i18n 最常见的一个坑）。"""
+    return [t("step.upload"), t("step.analyze"), t("step.interview"), t("step.report")]
 
-DIM_LABELS = {
-    "skills_match": "技能匹配", "experience_match": "经验匹配",
-    "education_match": "学历匹配", "project_relevance": "项目相关",
-}
+def _dim_labels():
+    """同 report.py：模块级常量会在 import 时把语言定死，必须每次渲染再取。"""
+    return {k: t("mdim." + k) for k in
+            ("skills_match", "experience_match", "education_match", "project_relevance")}
 
 
 def render() -> None:
-    page_header("简历智能分析", "JD 解析 · 匹配评分 · 试题生成 · 模糊点追问", "📄")
+    page_header(t("analysis.title"), t("analysis.subtitle"), "📄")
     if not st.session_state.get("analysis_done"):
-        progress_steps(STEPS, 0)
+        progress_steps(_steps(), 0)
         _render_upload()
     else:
-        progress_steps(STEPS, 1)
+        progress_steps(_steps(), 1)
         _render_results()
 
 
@@ -57,7 +61,7 @@ def _render_upload() -> None:
     col_jd, col_cv = st.columns(2, gap="large")
 
     with col_jd:
-        section("职位描述 (JD)", "PDF / DOCX / TXT，或直接粘贴文本")
+        section(t("analysis.jd"), t("analysis.jd_hint"))
         jd_file = st.file_uploader(
             "上传 JD 文件", type=["pdf", "docx", "txt"], key="jd_upload",
             label_visibility="collapsed",
@@ -65,33 +69,30 @@ def _render_upload() -> None:
         # ★ 原来这里是一个居中的「或」分隔符，渲染出来是个突兀的小方块。
         #   改成放在栏内的说明文字 —— 它本来就只对 JD 这一栏成立。
         jd_text_input = st.text_area(
-            "或直接粘贴 JD 文本", height=132, key="jd_text_input",
-            placeholder="没有文件？把职位描述粘贴到这里也可以…",
+            t("analysis.paste_label"), height=132, key="jd_text_input",
+            placeholder=t("analysis.paste_hint"),
         )
 
     with col_cv:
-        section("候选人简历", "PDF / DOCX / TXT，支持中英文")
+        section(t("analysis.resume"), t("analysis.resume_hint"))
         resume_file = st.file_uploader(
             "上传简历文件", type=["pdf", "docx", "txt"], key="resume_upload",
             label_visibility="collapsed",
         )
-        st.caption(
-            "仓库自带可直接使用的示例：`test_resumes/示例简历-王思远-后端开发.txt`\n\n"
-            "⚠️ 扫描件 / 图片型 PDF 需要额外安装 `rapidocr-onnxruntime` 才能识别。"
-        )
+        st.caption(t("analysis.sample_hint"))
 
     st.markdown("")
     ready = bool(resume_file) and bool(jd_file or (jd_text_input or "").strip())
     _, mid, _ = st.columns([1, 2, 1])
     with mid:
-        if st.button("开始智能分析", type="primary", use_container_width=True, disabled=not ready):
+        if st.button(t("analysis.start"), type="primary", use_container_width=True, disabled=not ready):
             run_analysis(jd_file, jd_text_input, resume_file)
         if not ready:
-            st.caption("需要同时提供 JD（文件或文本）与简历文件")
+            st.caption(t("analysis.upload_ready_hint"))
 
 
 def run_analysis(jd_file, jd_text_input, resume_file) -> None:
-    with st.spinner("正在解析文档…"):
+    with st.spinner(t("analysis.spinner_parse")):
         try:
             jd_text = ""
             if jd_file:
@@ -102,22 +103,22 @@ def run_analysis(jd_file, jd_text_input, resume_file) -> None:
         except Exception as e:                        # noqa: BLE001
             # ★ 解析失败必须把原因说清楚。扫描件 PDF 是最常见的一种，
             #   笼统的"分析失败"会让人以为是模型或网络的问题。
-            st.error(f"文档解析失败：{e}")
+            st.error(t("analysis.parse_failed") + str(e))
             return
         st.session_state.jd_text = jd_text
         st.session_state.resume_text = resume_text
 
     if not jd_text or not resume_text:
-        st.error("JD 与简历内容都不能为空")
+        st.error(t("analysis.empty_input"))
         return
 
     if NEW_ARCH:
-        with st.spinner("Graph DAG 执行中（Harness 护栏 · Checker 校准 · Skills 扩展）…"):
+        with st.spinner(t("analysis.spinner_run")):
             summary = run_analysis_with_pipeline(jd_text, resume_text)
         if summary.get("success"):
             st.session_state.analysis_done = True
             st.rerun()
-        st.error("分析失败，请到「设置」页检查模型 API 配置")
+        st.error(t("analysis.run_failed"))
         return
 
     # 旧链路兜底
@@ -166,7 +167,7 @@ def _render_results() -> None:
         reset_analysis()
         return
     if not questions:
-        st.warning("会话数据在服务重启后丢失，需要重新分析。")
+        st.warning(t("analysis.session_lost"))
         reset_analysis()
         return
 
@@ -181,51 +182,51 @@ def _render_results() -> None:
         (match.get("recommendation_reason") or "")[:260],
     )
     stat_grid([
-        {"label": "目标岗位", "value": jd_data.get("title") or "—"},
-        {"label": "候选人", "value": resume_data.get("name") or "—"},
-        {"label": "面试题", "value": f"{len(questions)} 道",
-         "hint": f'覆盖 {len({q.get("category") for q in questions})} 个维度'},
-        {"label": "Checker",
-         "value": "已通过" if st.session_state.get("checker_passed") else "已降级",
+        {"label": t("analysis.target_role"), "value": jd_data.get("title") or "—"},
+        {"label": t("analysis.candidate"), "value": resume_data.get("name") or "—"},
+        {"label": t("analysis.questions"), "value": t("analysis.q_count", n=len(questions)),
+         "hint": t("analysis.dim_cover", n=len({q.get("category") for q in questions}))},
+        {"label": t("analysis.checker"),
+         "value": t("analysis.checker_pass") if st.session_state.get("checker_passed") else t("analysis.checker_deg"),
          "color": score_color(100 if st.session_state.get("checker_passed") else 60),
-         "hint": f'{len(st.session_state.get("checker_results", []))} 轮校准'},
+         "hint": t("analysis.checker_rounds", n=len(st.session_state.get("checker_results", [])))},
     ])
 
     _render_next_actions(questions)
 
     # ── 第二屏：依据 ──────────────────────────────
-    section("评分依据", "每条理由都应能在简历/JD 原文中找到出处")
+    section(t("analysis.evidence"), t("analysis.evidence_hint"))
     col_score, col_ev = st.columns([1, 1.35], gap="large")
     with col_score:
         rows = [
-            (DIM_LABELS.get(dim, dim), info.get("score", 0) if isinstance(info, dict) else info)
+            (_dim_labels().get(dim, dim), info.get("score", 0) if isinstance(info, dict) else info)
             for dim, info in (match.get("score_breakdown") or {}).items()
         ]
         if rows:
             score_bars(rows)
         else:
-            st.caption("模型未返回维度拆分")
+            st.caption(t("analysis.no_breakdown"))
     with col_ev:
         t_ok, t_gap, t_risk = st.tabs([
-            f'优势 {len(match.get("matched_points") or [])}',
-            f'差距 {len(match.get("gap_points") or [])}',
-            f'风险 {len(match.get("risk_points") or [])}',
+            f'{t("analysis.strengths")} {len(match.get("matched_points") or [])}',
+            f'{t("analysis.gaps")} {len(match.get("gap_points") or [])}',
+            f'{t("analysis.risks")} {len(match.get("risk_points") or [])}',
         ])
         with t_ok:
-            evidence_list(match.get("matched_points") or [], "success", "✓", "暂无匹配优势项")
+            evidence_list(match.get("matched_points") or [], "success", "✓", t("analysis.no_strengths"))
         with t_gap:
-            evidence_list(match.get("gap_points") or [], "warning", "!", "暂无差距项")
+            evidence_list(match.get("gap_points") or [], "warning", "!", t("analysis.no_gaps"))
         with t_risk:
-            evidence_list(match.get("risk_points") or [], "danger", "▲", "暂无风险项")
+            evidence_list(match.get("risk_points") or [], "danger", "▲", t("analysis.no_risks"))
 
     # ── 明细（折叠）────────────────────────────────
-    section("面试材料")
+    section(t("analysis.materials"))
     _render_question_bank(questions)
     _render_followups()
 
     # ── 工程细节（折叠）────────────────────────────
     if NEW_ARCH:
-        section("工程执行详情", "Graph / Harness / Checker / Skills / 飞轮")
+        section(t("analysis.engineering"), t("analysis.engineering_sub"))
         _render_engineering_panels()
 
 
@@ -234,31 +235,31 @@ def _render_next_actions(questions) -> None:
     link_info = st.session_state.get("interview_link_info")
     st.markdown("")
     if link_info:
-        st.success(f'面试链接已生成 · {link_info.get("jd_title", "")} · 有效期至 {link_info.get("expires_at", "")}')
+        st.success(f'{t("analysis.link_made")} · {link_info.get("jd_title", "")} · {t("analysis.link_expire")} {link_info.get("expires_at", "")}')
         st.code(link_info["link"], language=None)
         c1, c2, c3 = st.columns([1, 1, 2])
         with c1:
-            if st.button("重新生成链接", use_container_width=True):
+            if st.button(t("analysis.relink"), use_container_width=True):
                 st.session_state.interview_link_info = None
                 st.rerun()
         with c2:
-            if st.button("自行测试面试", type="primary", use_container_width=True):
+            if st.button(t("analysis.self_test"), type="primary", use_container_width=True):
                 _goto_interview(questions)
         with c3:
-            if st.button("重新分析", use_container_width=True):
+            if st.button(t("analysis.reset"), use_container_width=True):
                 reset_analysis()
         return
 
     c1, c2, c3 = st.columns([1, 1, 2])
     with c1:
-        if st.button("生成面试链接", use_container_width=True, disabled=not questions,
-                     help="生成候选人专属链接，发过去即可独立完成 AI 面试"):
+        if st.button(t("analysis.make_link"), use_container_width=True, disabled=not questions,
+                     help=t("analysis.make_link_help")):
             _make_link(questions)
     with c2:
-        if st.button("自行测试面试", type="primary", use_container_width=True, disabled=not questions):
+        if st.button(t("analysis.self_test"), type="primary", use_container_width=True, disabled=not questions):
             _goto_interview(questions)
     with c3:
-        if st.button("重新分析", use_container_width=True):
+        if st.button(t("analysis.reset"), use_container_width=True):
             reset_analysis()
 
 
@@ -313,7 +314,7 @@ def _render_question_bank(questions) -> None:
     )
     st.markdown(f'<div style="margin-bottom:10px">{chips}</div>', unsafe_allow_html=True)
 
-    with st.expander(f"面试题库（{len(questions)} 道）", expanded=False):
+    with st.expander(t("analysis.qbank", n=len(questions)), expanded=False):
         order = list(DIMENSION_COLORS.keys())
         cats = sorted(by_cat, key=lambda c: order.index(c) if c in order else 99)
         tabs = st.tabs([f"{c} ({len(by_cat[c])})" for c in cats])
@@ -332,7 +333,7 @@ def _render_followups() -> None:
         return
     sev_tone = {"high": "danger", "medium": "warning", "low": "success"}
     sev_text = {"high": "高危", "medium": "关注", "low": "低风险"}
-    with st.expander(f"模糊点深度追问（{len(groups)} 组）", expanded=False):
+    with st.expander(t("analysis.followups", n=len(groups)), expanded=False):
         for g in groups:
             sev = g.get("severity", "")
             st.markdown(
@@ -343,7 +344,7 @@ def _render_followups() -> None:
             for fq in g.get("followups", []):
                 st.markdown(f'- {fq.get("question", "")}')
                 if fq.get("red_flag"):
-                    st.caption(f'🚩 危险信号：{fq["red_flag"]}')
+                    st.caption("🚩 " + t("analysis.red_flag") + str(fq["red_flag"]))
             st.markdown("")
 
 

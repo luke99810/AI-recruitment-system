@@ -299,6 +299,59 @@ def speak_text(text: str):
         st.session_state["tts_error"] = result.error or "语音合成失败（未知原因）"
 
 
+def render_audio_player():
+    """把待播音频渲染成 <audio>。
+
+    ★ 必须是【函数】而不是模块级代码：候选人页走的是
+      `page_candidate(); st.stop()` 这条分支，模块级的播放器在 st.stop()
+      之后，**永远执行不到** —— 所以候选人端此前 100% 没有声音，
+      哪怕合成成功也一样。现在候选人页自己调一次。
+    """
+    # 播放 pending_audio（由 speak_text 生成）
+    #
+    # ★ 自动播放**会被浏览器拦掉**，这是实测出来的，不是理论风险：
+    #   全新未交互的标签页里 play() 抛 NotAllowedError
+    #   （"play() failed because the user didn't interact with the document first"）。
+    #   最典型的中招场景是**候选人打开面试链接**——页面一加载面试官就要开口，
+    #   此时还没有任何点击。
+    #
+    #   而上一版渲染完 <audio> 就把 pending_audio_b64 清空了：播放被拦 → 没有声音、
+    #   没有提示、音频还丢了。这恰好违反了本项目自己反复强调的那条原则 ——
+    #   合成失败会报原因，**播放失败却是静默的**，用户眼里两者一模一样。
+    #
+    #   现在：先尝试自动播；被拦就把播放按钮显示出来，让人点一下就能听。
+    audio_b64 = st.session_state.get("pending_audio_b64", "")
+    if audio_b64:
+        st.markdown(f"""
+        <audio id="tts-player" autoplay style="display:none;">
+            <source src="data:audio/mp3;base64,{audio_b64}" type="audio/mp3">
+        </audio>
+        <div id="tts-fallback" style="display:none;margin:6px 0;padding:8px 12px;
+             background:#fffbeb;border:1px solid #fde68a;border-radius:8px;font-size:13px;color:#92400e;">
+          🔇 浏览器拦截了自动播放
+          <button onclick="document.getElementById('tts-player').play();
+                           this.parentElement.style.display='none';"
+                  style="margin-left:8px;padding:3px 10px;border-radius:6px;border:1px solid #d97706;
+                         background:#fff;color:#92400e;cursor:pointer;font-size:12px;">▶ 点击播放</button>
+        </div>
+        <script>
+        (function() {{
+          var a = document.getElementById('tts-player');
+          if (!a) return;
+          var p = a.play();
+          if (p && p.catch) {{
+            p.catch(function() {{
+              var f = document.getElementById('tts-fallback');
+              if (f) f.style.display = 'block';
+            }});
+          }}
+        }})();
+        </script>
+        """, unsafe_allow_html=True)
+        st.session_state["pending_audio_b64"] = ""
+
+
+
 # ── Sidebar ──────────────────────────────────────────
 def render_sidebar():
     with st.sidebar:
@@ -635,11 +688,42 @@ def page_candidate():
                 )
             st.session_state.candidate_agent = agent
             st.session_state.candidate_started = True
+            # ★ 面试官要出声。原来候选人页从头到尾没调过 speak_text ——
+            #   "面试官会说话"这件事在面试者那一端是完全不存在的。
+            if st.session_state.get("tts_enabled", True) and first_q:
+                speak_text(first_q)
             st.rerun()
 
     # ── Step 3: Interview chat ──
     agent = st.session_state.candidate_agent
 
+    # ★ 播放器必须在这里调一次：模块级那个在 `page_candidate(); st.stop()`
+    #   之后，候选人页根本走不到。
+    render_audio_player()
+
+    # ★ 数字人 + 语音开关。原来候选人页两样都没有 ——
+    #   而"面试官有形象、会说话"恰恰是面试者那一端才需要看到的东西。
+    col_dh, col_chat = st.columns([1, 3], gap="large")
+    with col_dh:
+        if st.session_state.get("digital_human_enabled", True):
+            last_itv = next((m["content"] for m in reversed(st.session_state.candidate_messages)
+                             if m["role"] == "interviewer"), "")
+            render_digital_human(last_itv, interview_info.get("persona_name", "面试官"))
+        st.session_state.tts_enabled = st.toggle(
+            "🔊 面试官语音", value=st.session_state.get("tts_enabled", True),
+            key="cand_tts", help="关掉就只看文字")
+        if st.session_state.get("tts_error"):
+            st.error(f"🔇 {st.session_state['tts_error']}")
+            st.session_state["tts_error"] = ""
+        elif st.session_state.get("tts_notice"):
+            st.caption(f"🔉 {st.session_state['tts_notice']}")
+            st.session_state["tts_notice"] = ""
+
+    with col_chat:
+        _render_candidate_chat(agent, token, deactivate_interview)
+
+
+def _render_candidate_chat(agent, token, deactivate_interview):
     # Display messages
     for msg in st.session_state.candidate_messages:
         cls = "interviewer" if msg["role"] == "interviewer" else "candidate"
@@ -702,6 +786,8 @@ def page_candidate():
             st.session_state.candidate_messages.append(
                 {"role": "interviewer", "content": next_msg}
             )
+            if st.session_state.get("tts_enabled", True) and next_msg:
+                speak_text(next_msg)          # ★ 每一轮追问都要出声，不只是开场
         else:
             st.session_state.candidate_messages.append(
                 {"role": "interviewer", "content": result.get("message", "面试结束")}
@@ -739,50 +825,7 @@ if query_params.get("role") == "candidate" and query_params.get("token"):
     st.stop()
 
 render_sidebar()
-
-# 播放 pending_audio（由 speak_text 生成）
-#
-# ★ 自动播放**会被浏览器拦掉**，这是实测出来的，不是理论风险：
-#   全新未交互的标签页里 play() 抛 NotAllowedError
-#   （"play() failed because the user didn't interact with the document first"）。
-#   最典型的中招场景是**候选人打开面试链接**——页面一加载面试官就要开口，
-#   此时还没有任何点击。
-#
-#   而上一版渲染完 <audio> 就把 pending_audio_b64 清空了：播放被拦 → 没有声音、
-#   没有提示、音频还丢了。这恰好违反了本项目自己反复强调的那条原则 ——
-#   合成失败会报原因，**播放失败却是静默的**，用户眼里两者一模一样。
-#
-#   现在：先尝试自动播；被拦就把播放按钮显示出来，让人点一下就能听。
-audio_b64 = st.session_state.get("pending_audio_b64", "")
-if audio_b64:
-    st.markdown(f"""
-    <audio id="tts-player" autoplay style="display:none;">
-        <source src="data:audio/mp3;base64,{audio_b64}" type="audio/mp3">
-    </audio>
-    <div id="tts-fallback" style="display:none;margin:6px 0;padding:8px 12px;
-         background:#fffbeb;border:1px solid #fde68a;border-radius:8px;font-size:13px;color:#92400e;">
-      🔇 浏览器拦截了自动播放
-      <button onclick="document.getElementById('tts-player').play();
-                       this.parentElement.style.display='none';"
-              style="margin-left:8px;padding:3px 10px;border-radius:6px;border:1px solid #d97706;
-                     background:#fff;color:#92400e;cursor:pointer;font-size:12px;">▶ 点击播放</button>
-    </div>
-    <script>
-    (function() {{
-      var a = document.getElementById('tts-player');
-      if (!a) return;
-      var p = a.play();
-      if (p && p.catch) {{
-        p.catch(function() {{
-          var f = document.getElementById('tts-fallback');
-          if (f) f.style.display = 'block';
-        }});
-      }}
-    }})();
-    </script>
-    """, unsafe_allow_html=True)
-    st.session_state["pending_audio_b64"] = ""
-
+render_audio_player()
 # ── 顶部品牌条 ────────────────────────────────────────
 # ★ 改之前这里是一行居中的 13px 灰色小字，而下面每个模块的标题是 28px 大字 ——
 #   **信息层级是倒置的**：应用名比它下属的模块名还弱。

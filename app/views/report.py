@@ -6,43 +6,46 @@
 """
 import streamlit as st
 
+from app.i18n import t
 from app.ui import (
     empty_state, evidence_list, page_header, pill, progress_steps,
     score_color, score_ring, section, stat_grid, verdict_banner,
 )
 
-STEPS = ["上传材料", "智能分析", "AI 面试", "评估报告"]
+def _steps():
+    return [t("step.upload"), t("step.analyze"), t("step.interview"), t("step.report")]
 
-REC_TEXT = {
-    "strong_hire": "强烈推荐", "hire": "推荐录用",
-    "hold": "待定", "no_hire": "不推荐",
-}
-DIM_LABELS = {
-    "job_match": "岗位匹配", "technical_ability": "技术能力",
-    "communication": "沟通表达", "comprehensive_quality": "综合素质",
-    "integrity": "诚信度",
-}
+# ★ 这两张表原本是模块级常量、写死中文 —— 而模块级常量在 import 时求值，
+#   语言切了也不会变。改成函数，每次渲染再取。
+def _rec_text():
+    return {k: t("rec." + k) for k in ("strong_hire", "hire", "hold", "no_hire")}
+
+
+def _dim_labels():
+    return {k: t("dim." + k) for k in
+            ("job_match", "technical_ability", "communication",
+             "comprehensive_quality", "integrity")}
 
 
 def render() -> None:
-    page_header("面试评估报告", "五维雷达 · 逐题评审 · 录用建议", "📊")
+    page_header(t("report.title"), t("report.subtitle"), "📊")
 
     if not st.session_state.get("interview_done"):
-        progress_steps(STEPS, 2)
-        empty_state("暂无评估报告", "完成「AI 面试」后，系统会自动生成多维度评估报告", "📊")
+        progress_steps(_steps(), 2)
+        empty_state(t("report.empty"), t("report.empty_desc"), "📊")
         return
 
-    progress_steps(STEPS, 3)
+    progress_steps(_steps(), 3)
     report = st.session_state.get("report_data")
     if not report:
         agent = st.session_state.get("interviewer")
         if agent and getattr(agent, "turns", None):
-            with st.spinner("正在生成报告…"):
+            with st.spinner(t("report.generating")):
                 from app.reporter import generate_report
                 report = generate_report(agent.get_interview_data())
                 st.session_state.report_data = report
         else:
-            st.warning("暂无面试数据")
+            st.warning(t("report.empty"))
             return
     if not report:
         return
@@ -54,31 +57,31 @@ def render() -> None:
 
     # ── 结论 ────────────────────────────────────
     verdict_banner(
-        score, REC_TEXT.get(rec, rec or "—"),
+        score, _rec_text().get(rec, rec or "—"),
         report.get("summary") or report.get("overall_comment") or "",
-        score_label="综合评分",
+        score_label=t("report.score"),
     )
     dim_scores = report.get("dimension_scores") or {}
     stat_grid([
-        {"label": "面试轮数", "value": turns},
-        {"label": "评估维度", "value": len(dim_scores)},
-        {"label": "亮点", "value": len(report.get("highlights") or []),
+        {"label": t("report.rounds"), "value": turns},
+        {"label": t("report.dims"), "value": len(dim_scores)},
+        {"label": t("report.highlights"), "value": len(report.get("highlights") or []),
          "color": score_color(90)},
-        {"label": "关注点", "value": len(report.get("concerns") or []),
+        {"label": t("report.concerns"), "value": len(report.get("concerns") or []),
          "color": score_color(60)},
     ])
 
     # ── 依据：五维 ───────────────────────────────
     if dim_scores:
-        section("五维能力评估")
+        section(t("report.five_dim"))
         col_ring, col_radar = st.columns([1, 2], gap="large")
         with col_ring:
-            st.markdown(score_ring(score, 150, "综合"), unsafe_allow_html=True)
+            st.markdown(score_ring(score, 150, t("report.overall")), unsafe_allow_html=True)
             st.markdown("")
             for k, v in dim_scores.items():
                 s = v.get("score", 0) if isinstance(v, dict) else v
                 st.markdown(
-                    f'<div class="kv"><span class="k">{DIM_LABELS.get(k, k)}</span>'
+                    f'<div class="kv"><span class="k">{_dim_labels().get(k, k)}</span>'
                     f'<span class="v" style="color:{score_color(s)}">{s}</span></div>',
                     unsafe_allow_html=True,
                 )
@@ -86,18 +89,18 @@ def render() -> None:
             _render_radar(dim_scores)
 
     # ── 亮点 / 关注点 ────────────────────────────
-    section("亮点与关注点")
+    section(t("report.hl_and_cn"))
     c1, c2 = st.columns(2, gap="large")
     with c1:
-        st.markdown(pill("亮点", "success"), unsafe_allow_html=True)
-        evidence_list(report.get("highlights") or [], "success", "★", "未识别到明显亮点")
+        st.markdown(pill(t("report.highlights"), "success"), unsafe_allow_html=True)
+        evidence_list(report.get("highlights") or [], "success", "★", t("report.no_hl"))
     with c2:
-        st.markdown(pill("关注点", "warning"), unsafe_allow_html=True)
-        evidence_list(report.get("concerns") or [], "warning", "!", "未识别到明显关注点")
+        st.markdown(pill(t("report.concerns"), "warning"), unsafe_allow_html=True)
+        evidence_list(report.get("concerns") or [], "warning", "!", t("report.no_cn"))
 
     if report.get("contradictions"):
         st.markdown("")
-        st.markdown(pill("前后矛盾", "danger"), unsafe_allow_html=True)
+        st.markdown(pill(t("report.contradict"), "danger"), unsafe_allow_html=True)
         evidence_list(report["contradictions"], "danger", "▲")
 
     # ── 逐题评审（折叠）──────────────────────────
@@ -109,7 +112,7 @@ def _render_radar(dim_scores: dict) -> None:
 
     cats, vals = [], []
     for k, v in dim_scores.items():
-        cats.append(DIM_LABELS.get(k, k))
+        cats.append(_dim_labels().get(k, k))
         vals.append(v.get("score", 0) if isinstance(v, dict) else v)
     if not cats:
         return
@@ -140,28 +143,31 @@ def _render_question_review(report: dict) -> None:
     q_review = report.get("question_review") or []
     agent = st.session_state.get("interviewer")
     if not q_review and agent:
+        # ★ 循环变量原来叫 t —— 和翻译函数 t() 同名。推导式有自己的作用域所以
+        #   眼下还能跑，但只要有人把它改成普通 for 循环，t() 就会被整个函数体
+        #   遮蔽成一个 dict，报错点还离得很远。改名，不留这个雷。
         q_review = [{
-            "round": t.get("round", "?"),
-            "question": t.get("question", ""),
-            "answer_summary": (t.get("answer") or "")[:200],
-            "score": (t.get("evaluation") or {}).get("score", "—"),
-            "evaluation": (t.get("evaluation") or {}).get("answer_quality", ""),
-        } for t in agent.turns]
+            "round": turn.get("round", "?"),
+            "question": turn.get("question", ""),
+            "answer_summary": (turn.get("answer") or "")[:200],
+            "score": (turn.get("evaluation") or {}).get("score", "—"),
+            "evaluation": (turn.get("evaluation") or {}).get("answer_quality", ""),
+        } for turn in agent.turns]
     if not q_review:
         return
 
-    section("逐题评审", f"共 {len(q_review)} 题")
+    section(t("report.per_q"), t("report.q_count", n=len(q_review)))
     for r in q_review:
         sc = r.get("score", "—")
         tone = "neutral"
         if isinstance(sc, (int, float)) and sc > 0:
             tone = ("success" if sc >= 85 else "brand" if sc >= 70
                     else "warning" if sc >= 55 else "danger")
-            sc = f"{int(sc)} 分"
+            sc = t("report.score_n", n=int(sc))
         title = (r.get("question") or "")[:60]
-        with st.expander(f'第 {r.get("round", "?")} 轮 · {title}…'):
+        with st.expander(t("report.round_n", n=r.get("round", "?")) + f" · {title}…"):
             st.markdown(pill(str(sc), tone), unsafe_allow_html=True)
-            st.markdown(f'**问题**\n\n{r.get("question", "")}')
-            st.markdown(f'**回答摘要**\n\n{r.get("answer_summary", "") or "—"}')
+            st.markdown(f'**{t("report.question")}**\n\n{r.get("question", "")}')
+            st.markdown(f'**{t("report.answer")}**\n\n{r.get("answer_summary", "") or "—"}')
             if r.get("evaluation"):
-                st.markdown(f'**评价**\n\n{r["evaluation"]}')
+                st.markdown(f'**{t("report.comment")}**\n\n{r["evaluation"]}')
