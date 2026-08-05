@@ -17,11 +17,19 @@
 
 ## 演示视频
 
+视频已随仓库分发（`Demo-Video.mp4`，33.9 MB），克隆下来即可播放，无需另外下载。
+
 <p align="center">
-  <a href="https://github.com/luke99810/AI-recruitment-system/releases/download/v2.0.0-demo/Demo-Video.mp4">
+  <a href="https://github.com/luke99810/AI-recruitment-system/raw/main/Demo-Video.mp4">
     <img src="https://img.shields.io/badge/⬇️ 下载演示视频-8A2BE2?style=for-the-badge" alt="下载演示视频">
   </a>
+  &nbsp;
+  <a href="./Demo-Video.mp4">
+    <img src="https://img.shields.io/badge/在 GitHub 上查看-24292f?style=for-the-badge" alt="在 GitHub 上查看">
+  </a>
 </p>
+
+> GitHub 网页不会内嵌预览超过 10 MB 的视频，点上面任一按钮下载后本地播放。
 
 ---
 
