@@ -181,7 +181,18 @@ AI-recruitment-system/
 ├── .env.example              # 环境变量模板
 ├── requirements.txt          # 依赖清单
 ├── app/
-│   ├── main.py               # Streamlit 统一前端 (v2.2 集成新架构)
+│   ├── main.py               # 应用外壳：路由 / 侧边栏 / 数字人 / TTS（784 行）
+│   │
+│   │  # ── v2.3 视图层（从 main.py 2156 行中拆出）──
+│   ├── ui/
+│   │   ├── theme.py          # ★ 设计 token + 全局样式（唯一样式来源）
+│   │   └── components.py     # ★ 可复用组件：页头/结论横幅/题卡/证据列表…
+│   ├── views/
+│   │   ├── analysis.py       # ★ 简历分析页
+│   │   ├── interview.py      # ★ AI 面试页
+│   │   └── report.py         # ★ 评估报告页
+│   ├── i18n.py               # 中英双语
+│   ├── settings_page.py      # 模型 API / 语音引擎配置
 │   ├── config.py             # 全局配置
 │   ├── llm_client.py         # LLM 客户端（含 JSON 修复）
 │   ├── prompts.py            # Prompt 模板（11套）
@@ -290,7 +301,7 @@ python run.py
 
 ---
 
-## 七、技术难点与解决（10项）
+## 七、技术难点与解决（12项）
 
 | # | 难点 | 解决方案 |
 |---|------|---------|
@@ -304,6 +315,59 @@ python run.py
 | 8 | 题库分层抽样 | 每类保底1题 + 随机补足到 N，剩余入备选池 |
 | 9 | LLM JSON 不稳定 | 正则清洗 + 自动补全 + 指数退避重试 |
 | 10 | PDF 解析鲁棒性 | PyMuPDF→pdfplumber→OCR 三级降级 |
+| 11 | **Checker 结构性永不 PASS** | 五个维度按 `output_type` 判定适用性；不适用的维度排除在 `overall_pass` 与加权分之外（详见下方） |
+| 12 | **单次分析耗时 4.5 分钟** | Skills 并行 + 两条校准链并行 + 消除无效重生成 → 实测 273.9s → 154.9s |
+
+### 难点 11 详述：一个"防崩溃防对了、默认值取错了"的 bug
+
+Checker 的五个维度里，`维度覆盖` 查的是 `output["questions"]`，`数据准确性`
+查的是 `output` 的 `matched_points / gap_points`。但：
+
+- `match_result` 结构上**没有** `questions` → 覆盖度恒为 0 分
+- `questions_output` 结构上**没有** `matched_points` → 准确性恒为 0 分
+
+而 `overall_pass` 要求全部维度达标，于是**两条校准链都永远不可能 PASS**。
+后果是三重的：verdict 恒为 FAIL、结果恒被打上 `degraded:true`（自我校验输出的
+信号是假的）；每次分析必然跑满 3 轮 = 4 次额外 LLM 重生成（实测占 273.9s 里的
+约 159s，试题重生成一次就要 60~70s）；演示时评审看到的永远是"校验未通过"。
+
+指纹是 `int(accuracy_passes / max(accuracy_checks, 1) * 100)` 里的
+`max(..., 1)` —— 写的人知道分母可能为 0 并防了除零，但把"没什么可查"
+变成了"查了，0 分"。**崩溃防对了，默认值取错了。**
+
+修法是引入 `DIMENSION_APPLICABILITY`：不适用的维度**既不计 0 也不计 100**
+（计 100 等于伪造通过，同样是假信号），而是排除在判定与加权之外，并在
+`CheckerResult.skipped_dimensions` 里显式标注"不适用"。
+加权分按实际参与的维度归一化，否则两种输出类型的分数无法互相比较。
+
+修复后实测：试题链 **第 1 轮即 PASS**（0 次重生成），匹配链的
+`数据准确性` 在 75 → 87 → 80 之间真实波动 —— 校准循环这才是在做事。
+
+### 难点 12 详述：耗时从哪来（实测，不是估算）
+
+| 环节 | 修复前 | 修复后 |
+|---|---|---|
+| 解析 JD + 简历（已并行） | 10.3s | 11.8s |
+| 匹配评分 | 7.4s | 10.4s |
+| 试题生成 | 61.5s | 69.9s |
+| 追问 ∥ Skills | 35.2s | 46.2s |
+| **Checker 校准循环** | **~159s** | **~17s** |
+| **合计** | **273.9s** | **154.9s（−43%）** |
+
+三处改动：
+
+1. **Skills 并行** —— 原来 `for skill in active_skills:` 串行调 LLM，
+   默认激活 3 个 `on_question_generation` 的 Skill 就是 3 次往返首尾相接。
+   它们各自只读 jd/resume/match、互不依赖，串行没有任何理由。
+2. **两条校准链并行** —— 匹配与试题的校准彼此不依赖。并行前先把
+   `match_result` 快照给试题链，否则匹配链改到一半的中间态会被读到
+   （竞态，且是偶发才现形的那种）。
+3. **消除无效重生成** —— 即难点 11。这一条贡献最大。
+
+剩余瓶颈是 `generate_questions` 单节点 70s（一次生成 10+ 道题、覆盖 5 个维度）。
+可以按维度拆成 5 个并行调用，但那会改变 Graph 拓扑 ——
+任务要求推荐的 DAG 形状是 `QuestionGen → Ambiguity` 串行，
+为省时间偏离规定拓扑并不划算，故保留。
 
 详见 `项目开发文档.md`。
 

@@ -51,7 +51,10 @@ xtts_sdk/
 test_resumes/*.pdf
 
 # Streamlit
-.streamlit/
+# ★ 只忽略密钥文件，config.toml 必须入库 ——
+#   主题锁定亮色的设置写在它里面，不入库的话别人克隆下来渲染出的
+#   界面和这里不一样（Streamlit 默认会跟随系统主题选深色）。
+.streamlit/secrets.toml
 
 # 项目工作区
 .workbuddy/
@@ -73,3 +76,6 @@ outputs/
 
 # mypy
 .mypy_cache/
+
+# 本地补丁/临时产物
+patches/
