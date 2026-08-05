@@ -758,6 +758,11 @@ NAV = [
     ("analysis",  "📄 " + _t("nav.analysis")),
     ("interview", "🤖 " + _t("nav.interview")),
     ("report",    "📊 " + _t("nav.report")),
+    # ★ Skills 单独成页而不是塞在侧边栏：任务要求 C2 的六个生命周期操作
+    #   （list/insert/activate/compose/delete/hot_reload）都要有入口，
+    #   而交付物明确要求演示视频重点展示"插入/激活/删除"——
+    #   窄侧边栏里塞 YAML 编辑器录出来没法看。
+    ("skills",    "🧩 " + _t("nav.skills")),
     ("settings",  "⚙️ " + _t("nav.settings")),
 ]
 nav_keys = [k for k, _ in NAV]
@@ -780,6 +785,9 @@ elif active == "interview":
     tab_ai_interview()
 elif active == "report":
     tab_report()
+elif active == "skills":
+    from app.views import skills_admin
+    skills_admin.render()
 elif active == "settings":
     from app.settings_page import render_settings_page
     render_settings_page()

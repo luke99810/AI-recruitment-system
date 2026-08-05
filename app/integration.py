@@ -68,32 +68,16 @@ def render_skills_panel():
                             manager.toggle(skill["skill_id"], True)
                             st.rerun()
     
-    # ── 插入自定义 Skill ──
-    with st.expander("➕ 自定义 Skill", expanded=False):
-        sample = 'skill_id: "my-skill"\\nname: "My Skill"\\ncategory: "assessment"\\ntrigger: "on_question_generation"\\nactive: false'
-        yaml_text = st.text_area("Skill YAML", height=120, value=sample)
-        prompt_text = st.text_area("Prompt 模板", height=80, placeholder="你是招聘专家...")
-        if st.button("📥 安装到库", use_container_width=True):
-            try:
-                lines = yaml_text.strip().split('\\n')
-                sid = None
-                for L in lines:
-                    if L.startswith('skill_id:'):
-                        sid = L.split(':', 1)[1].strip().strip('"').strip("'")
-                        break
-                if sid:
-                    d = Path(__file__).parent / "skills" / sid
-                    os.makedirs(d, exist_ok=True)
-                    with open(d / "skill.yaml", 'w', encoding='utf-8') as f:
-                        f.write(yaml_text)
-                    with open(d / "prompt_template.txt", 'w', encoding='utf-8') as f:
-                        f.write(prompt_text)
-                    st.success(f"Skill {sid} 已加入库（默认关闭，需手动激活）")
-                    st.rerun()
-                else:
-                    st.error("无法解析 skill_id")
-            except Exception as e:
-                st.error(f"失败: {e}")
+    # ── 完整生命周期管理入口 ──
+    # ★ 这里原本有个「➕ 自定义 Skill」表单，但它是坏的：
+    #     sample = 'skill_id: "my-skill"\\nname: …'   ← 字面反斜杠 n
+    #   文本框里显示的是一整行带 \n 的文本（1 行，不是 5 行），
+    #   照着默认值点「安装到库」写出来的 skill.yaml 解析不出任何字段；
+    #   解析那边 split('\\n') 切的同样是字面反斜杠 n。
+    #   而且 delete / hot_reload 在 UI 上根本没有入口。
+    #   现已整体搬到「🧩 Skills」独立页，六个操作齐全且有校验。
+    st.caption("插入 / 卸载 / 热重载 / 组合视图 → 顶部「🧩 Skills」页")
+
 
 def render_checker_panel(checker_results):
     """Checker 校准结果面板"""
@@ -138,10 +122,20 @@ def render_flywheel_panel(flywheel_store=None):
         flywheel_store = FlywheelStore()
     st.markdown("### Flywheel 飞轮统计 (Loop 3)")
     stats = flywheel_store.get_stats()
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("历史记录", stats.get("total_records", 0))
     c2.metric("均分", f"{stats.get('avg_match_score',0):.0f}")
     c3.metric("标签", len(stats.get("recent_tags", [])))
+    # ★ 检索后端如实显示。界面上写着"向量检索"而底下在跑关键词匹配，
+    #   比降级本身糟糕得多 —— 那是假信号。
+    backend_label = {
+        "chroma": "ChromaDB",
+        "vector": "内置向量索引",
+        "keyword": "关键词匹配（降级）",
+    }.get(stats.get("backend", ""), stats.get("backend", "?"))
+    c4.metric("检索后端", backend_label)
+    if stats.get("backend_note"):
+        st.caption(stats["backend_note"])
 
 def run_analysis_with_pipeline(jd_text, resume_text):
     """使用 Graph Pipeline 执行分析"""

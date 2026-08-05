@@ -31,6 +31,7 @@ _STRINGS: dict[str, dict[str, str]] = {
     "nav.analysis":        {"zh": "简历分析",       "en": "Screening"},
     "nav.interview":       {"zh": "AI 面试",        "en": "Interview"},
     "nav.report":          {"zh": "评估报告",       "en": "Report"},
+    "nav.skills":          {"zh": "Skills",         "en": "Skills"},
     "nav.settings":        {"zh": "设置",           "en": "Settings"},
 
     # ── 简历分析 ────────────────────────────────

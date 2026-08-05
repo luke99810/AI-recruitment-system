@@ -190,7 +190,8 @@ AI-recruitment-system/
 │   ├── views/
 │   │   ├── analysis.py       # ★ 简历分析页
 │   │   ├── interview.py      # ★ AI 面试页
-│   │   └── report.py         # ★ 评估报告页
+│   │   ├── report.py         # ★ 评估报告页
+│   │   └── skills_admin.py   # ★ Skills 管理页（六个生命周期操作全有入口）
 │   ├── i18n.py               # 中英双语
 │   ├── settings_page.py      # 模型 API / 语音引擎配置
 │   ├── config.py             # 全局配置
@@ -317,6 +318,9 @@ python run.py
 | 10 | PDF 解析鲁棒性 | PyMuPDF→pdfplumber→OCR 三级降级 |
 | 11 | **Checker 结构性永不 PASS** | 五个维度按 `output_type` 判定适用性；不适用的维度排除在 `overall_pass` 与加权分之外（详见下方） |
 | 12 | **单次分析耗时 4.5 分钟** | Skills 并行 + 两条校准链并行 + 消除无效重生成 → 实测 273.9s → 154.9s |
+| 13 | **Skill 安装表单是坏的** | 示例 YAML 写成字面 `
+`（1 行而非 5 行），照默认值安装会写出解析不出字段的文件；且 delete / hot_reload 无 UI 入口 → 重写为独立的「🧩 Skills」页，六个操作齐全并带落盘前校验 |
+| 14 | **飞轮的"向量数据库"名不副实** | docstring 写 ChromaDB，代码里一行 chromadb 都没有，检索是 Jaccard；且落盘丢掉 `checker_feedback`，重启即失忆 → 见下方详述 |
 
 ### 难点 11 详述：一个"防崩溃防对了、默认值取错了"的 bug
 
@@ -368,6 +372,37 @@ Checker 的五个维度里，`维度覆盖` 查的是 `output["questions"]`，`�
 可以按维度拆成 5 个并行调用，但那会改变 Graph 拓扑 ——
 任务要求推荐的 DAG 形状是 `QuestionGen → Ambiguity` 串行，
 为省时间偏离规定拓扑并不划算，故保留。
+
+### 难点 14 详述：向量检索与"如实报告降级"
+
+改造前 `FlywheelStore` 的 docstring 写着"基于 ChromaDB 的向量存储，未安装则自动降级"，
+但**代码里一行 chromadb 都没有**，检索走的是 Jaccard 关键词匹配，
+也不存在任何降级分支。任务 Part D 要求的"存入向量数据库 + RAG 检索"当时并不成立。
+
+连带还有一个更隐蔽的问题：`_record_to_dict` 只落盘 6 个字段，
+把 `match_result / questions / interview_report / checker_feedback` 全丢了。
+于是 `get_common_checker_issues` 遍历的 `checker_feedback` 重启后一律是 None ——
+"Checker 常见问题自动注入 Prompt"只在单个进程生命周期内成立，**重启即失忆，飞轮转不起来**。
+
+现在的检索后端三选一，且**当前用的是哪一条会显示在飞轮面板上**：
+
+| backend | 说明 |
+|---|---|
+| `chroma` | ChromaDB + HNSW。设 `FLYWHEEL_VECTOR_BACKEND=chroma` 启用 |
+| `vector` | **默认**。内置向量索引：n-gram 哈希 embedding（384 维，L2 归一化）+ 余弦相似度，纯 Python、离线可用 |
+| `keyword` | Jaccard 关键词匹配（最后兜底） |
+
+**为什么 chromadb 不是默认**：在 Python 3.13 + Windows 上实测，chromadb 1.5.9 会在
+`collection.add` 处**段错误**（持久化客户端与内存客户端一样），而段错误会直接杀掉
+Streamlit 进程、`try/except` 拦不住；降到 0.5.x 又没有 3.13 的预编译轮子，
+需要现场编译 `chroma-hnswlib`。所以默认走一条确定能跑的路，chromadb 留作显式 opt-in。
+Python 3.11/3.12 环境下可以放心开启。
+
+> ⚠️ 一个自我纠正：中途我一度以为"语义检索命中了"，实际是 chromadb 的 `add`
+> 因缺 onnxruntime 每次都抛错、被 `except: pass` 吞掉，集合始终是空的，
+> 检索悄悄退回了关键词匹配，而结果恰好按插入顺序把目标排在了第一。
+> **被吞掉的错误会让"降级"和"正常"长得一模一样。** 现在写入失败会显式改写
+> `backend` 并打日志，面板上也会跟着变。
 
 详见 `项目开发文档.md`。
 

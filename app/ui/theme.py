@@ -106,7 +106,17 @@ html, body, [class*="css"], .stApp {
     color: var(--text);
 }
 .stApp { background: var(--surface-2); }
-.block-container { padding-top: 1.2rem; padding-bottom: 3rem; max-width: 1320px; }
+
+/* ★ padding-top 必须留出 Streamlit 自带顶栏的高度。
+   实测：[data-testid="stHeader"] 高 60px、position:absolute、z-index 999990，
+   而且【背景是不透明白色】。我一开始把 padding-top 压到 1.2rem(19.2px)，
+   品牌条的 top 就落到 35px —— 正好钻到顶栏底下被盖住，
+   而顶栏是 absolute 定位在滚动容器顶部的，所以**往上滑也露不出来**，
+   表现为"那几行字只有一半"。60px + 呼吸空间 = 4.75rem。 */
+.block-container { padding-top: 4.75rem; padding-bottom: 3rem; max-width: 1320px; }
+
+/* 顶栏本身也对齐一下配色，否则白条压在浅灰页面上有一道明显的色差 */
+[data-testid="stHeader"] { background: var(--surface-2); }
 
 h1, h2, h3, h4 { color: var(--text); font-weight: 650; letter-spacing: -0.01em; }
 p, li, span, label { color: var(--text-2); }
