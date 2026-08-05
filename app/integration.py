@@ -30,14 +30,27 @@ def render_skills_panel():
     if active_skills:
         st.markdown("**已激活**")
         for skill in active_skills:
-            c1, c2, c3 = st.columns([2, 5, 1])
+            # 列宽 [2,5,1] → [1,5,2]：原来「ON」两个字占了 2 份，而按钮只有
+            # 1 份。侧边栏本身就窄，1/8 折算下来只有十几像素宽，✕ 挤在里面
+            # 既看不出居中也几乎点不中。ON 是个色块文字，1 份够用；按钮要 2 份。
+            c1, c2, c3 = st.columns([1, 5, 2])
             with c1:
-                st.markdown(f"<span style='color:#10b981;font-weight:bold'>ON</span>", unsafe_allow_html=True)
+                st.markdown(
+                    "<span style='color:#10b981;font-weight:700;font-size:12px'>ON</span>",
+                    unsafe_allow_html=True,
+                )
             with c2:
                 st.markdown(f"**{skill['name']}**  ")
                 st.caption(f"{skill.get('description', '')[:50]}")
             with c3:
-                if st.button("✕", key=f"sk_off_{skill['skill_id']}", help="停用"):
+                # use_container_width 让按钮吃满这 2 份宽度 —— 不加的话
+                # Streamlit 按内容宽度渲染，列再宽按钮还是那么小一颗。
+                if st.button(
+                    "停用",
+                    key=f"sk_off_{skill['skill_id']}",
+                    help=f"停用 {skill['name']}",
+                    use_container_width=True,
+                ):
                     manager.toggle(skill["skill_id"], False)
                     st.rerun()
     
@@ -58,13 +71,19 @@ def render_skills_panel():
             for cat, skills in cats.items():
                 st.caption(cat_names.get(cat, cat))
                 for skill in skills:
-                    c1, c2, c3 = st.columns([2, 5, 1])
+                    # 与「已激活」那组同样的列宽调整，理由见上。
+                    c1, c2, c3 = st.columns([3, 4, 2])
                     with c1:
                         st.caption(skill["name"])
                     with c2:
                         st.caption(f"{skill.get('description', '')[:45]}...")
                     with c3:
-                        if st.button("+", key=f"sk_on_{skill['skill_id']}", help="激活"):
+                        if st.button(
+                            "激活",
+                            key=f"sk_on_{skill['skill_id']}",
+                            help=f"激活 {skill['name']}",
+                            use_container_width=True,
+                        ):
                             manager.toggle(skill["skill_id"], True)
                             st.rerun()
     

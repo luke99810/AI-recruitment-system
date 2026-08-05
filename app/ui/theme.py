@@ -295,6 +295,35 @@ a { color: var(--brand); }
     border-color: var(--border) !important; cursor: not-allowed;
 }
 
+/* ── 侧边栏里的小动作按钮（Skills 的 停用 / 激活）─────────────
+   原来点不中，是三件事叠加的：
+     1. 按钮所在列只占 1/8 宽（st.columns([2,5,1])），侧边栏本来就窄,
+        算下来实际可点区域只有十几像素；
+     2. Streamlit 的按钮内层是 <p>，继承了全局 p 的行高与 margin，
+        单字符 ✕ 在盒子里偏上，看着"不居中"；
+     3. 图标按钮本身就比文字按钮难点 —— 已把 ✕/＋ 换成「停用」「激活」,
+        既是更大的点击目标，也不用猜 ✕ 是停用还是删除。
+   列宽已在 integration.py 调整，这里负责让按钮把列吃满并真正居中。
+   min-height 36px 对着鼠标绰绰有余，也不至于把侧边栏撑得太松。 */
+[data-testid="stSidebar"] .stButton > button {
+    width: 100%;
+    min-height: 36px;
+    padding: 0 6px !important;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12.5px; line-height: 1; white-space: nowrap;
+}
+/* 内层 <p> 自带 margin/line-height，会把字符顶偏 —— 必须一起清掉,
+   只在 button 上设 flex 居中是不够的。 */
+[data-testid="stSidebar"] .stButton > button p {
+    margin: 0 !important; padding: 0 !important; line-height: 1 !important;
+}
+/* hover 给个底色，让"我正指在这颗按钮上"看得见 —— 窄侧边栏里相邻按钮
+   挨得近，只靠文字变色不够明显。刻意不用红色：停用可以再激活，不是
+   破坏性动作，红色留给真正的删除（在「🧩 Skills」页）。 */
+[data-testid="stSidebar"] .stButton > button:hover {
+    background: var(--surface-3);
+}
+
 [data-testid="stFileUploader"] {
     background: var(--surface); border: 1px dashed var(--border-2);
     border-radius: var(--radius); padding: 6px 12px;
