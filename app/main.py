@@ -441,16 +441,39 @@ def voice_input_widget(key="voice_input"):
                     document.getElementById('mic-btn-{key}').style.background = '#1e1b4b';
                     document.getElementById('status-{key}').textContent = '';
                     isRecording = false;
-                    // Send back to Streamlit
-                    var inputEl = window.parent.document.querySelector(
-                        'iframe[title="components.vo·voice_input_widget"]'
-                    );
-                    // Fallback: use Streamlit's postMessage
-                    window.parent.postMessage({{
-                        isStreamlitMessage: true,
-                        type: 'streamlit:setComponentValue',
-                        value: transcript
-                    }}, '*');
+
+                    /* ★ 把识别结果送回 Python。
+                       原来发的是 streamlit:setComponentValue —— 那个协议只对
+                       用 components.declare_component 注册过的自定义组件有效；
+                       st.components.v1.html() 渲染的是**静态 iframe**，没有
+                       componentId，Streamlit 根本不监听它。
+                       更直接的证据：st.components.v1.html() 的返回类型是
+                       DeltaGenerator，压根不返回组件值 —— 所以
+                       handle_voice_input() 里的 isinstance(val, str) 永远为假，
+                       识别出来的文字从来没有到达过 Python。而且它失败得很安静：
+                       麦克风会亮、会听、会识别，只是结果被丢掉。
+
+                       改法：srcdoc iframe 与父页同源（已实测 window.parent.document
+                       可访问），直接把文本写进候选人页的输入框，并派发 input 事件
+                       让 React 记账 —— 用户看得见文字进了框，点发送即可。*/
+                    try {{
+                        var doc = window.parent.document;
+                        var box = doc.querySelector('input[aria-label="candidate_text_input"]')
+                               || [].slice.call(doc.querySelectorAll('input[type="text"]')).pop();
+                        if (box) {{
+                            var setter = Object.getOwnPropertyDescriptor(
+                                window.parent.HTMLInputElement.prototype, 'value').set;
+                            setter.call(box, transcript);
+                            box.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                            document.getElementById('status-{key}').textContent = '✅ 已填入，请点发送';
+                        }} else {{
+                            document.getElementById('status-{key}').textContent =
+                                '⚠️ 识别到「' + transcript + '」但没找到输入框，请手动输入';
+                        }}
+                    }} catch (err) {{
+                        document.getElementById('status-{key}').textContent =
+                            '⚠️ 识别到「' + transcript + '」但无法回填：' + err.message;
+                    }}
                 }};
 
                 recognition.onerror = function(event) {{
@@ -503,11 +526,14 @@ def voice_input_widget(key="voice_input"):
     """, height=60)
 
 def handle_voice_input():
-    """检查语音输入组件返回值，有文本则填充到 session_state"""
-    val = voice_input_widget()
-    if val and isinstance(val, str) and val.strip():
-        st.session_state.voice_input_text = val.strip()
-        return val.strip()
+    """渲染语音输入组件。
+
+    ★ 这里【不再尝试读返回值】：st.components.v1.html() 返回的是
+      DeltaGenerator，不是组件值 —— 上一版 `if val and isinstance(val, str)`
+      的条件永远为假，是一段看着在工作、实际什么也不做的代码。
+      识别结果现在由组件内部直接写进页面上的输入框（见 voice_input_widget）。
+    """
+    voice_input_widget()
     return None
 
 # ── Candidate Interview Page ──────────────────────────
@@ -714,13 +740,46 @@ if query_params.get("role") == "candidate" and query_params.get("token"):
 
 render_sidebar()
 
-# 自动播放 pending_audio（由 speak_text 生成）
+# 播放 pending_audio（由 speak_text 生成）
+#
+# ★ 自动播放**会被浏览器拦掉**，这是实测出来的，不是理论风险：
+#   全新未交互的标签页里 play() 抛 NotAllowedError
+#   （"play() failed because the user didn't interact with the document first"）。
+#   最典型的中招场景是**候选人打开面试链接**——页面一加载面试官就要开口，
+#   此时还没有任何点击。
+#
+#   而上一版渲染完 <audio> 就把 pending_audio_b64 清空了：播放被拦 → 没有声音、
+#   没有提示、音频还丢了。这恰好违反了本项目自己反复强调的那条原则 ——
+#   合成失败会报原因，**播放失败却是静默的**，用户眼里两者一模一样。
+#
+#   现在：先尝试自动播；被拦就把播放按钮显示出来，让人点一下就能听。
 audio_b64 = st.session_state.get("pending_audio_b64", "")
 if audio_b64:
     st.markdown(f"""
-    <audio autoplay style="display:none;">
+    <audio id="tts-player" autoplay style="display:none;">
         <source src="data:audio/mp3;base64,{audio_b64}" type="audio/mp3">
     </audio>
+    <div id="tts-fallback" style="display:none;margin:6px 0;padding:8px 12px;
+         background:#fffbeb;border:1px solid #fde68a;border-radius:8px;font-size:13px;color:#92400e;">
+      🔇 浏览器拦截了自动播放
+      <button onclick="document.getElementById('tts-player').play();
+                       this.parentElement.style.display='none';"
+              style="margin-left:8px;padding:3px 10px;border-radius:6px;border:1px solid #d97706;
+                     background:#fff;color:#92400e;cursor:pointer;font-size:12px;">▶ 点击播放</button>
+    </div>
+    <script>
+    (function() {{
+      var a = document.getElementById('tts-player');
+      if (!a) return;
+      var p = a.play();
+      if (p && p.catch) {{
+        p.catch(function() {{
+          var f = document.getElementById('tts-fallback');
+          if (f) f.style.display = 'block';
+        }});
+      }}
+    }})();
+    </script>
     """, unsafe_allow_html=True)
     st.session_state["pending_audio_b64"] = ""
 

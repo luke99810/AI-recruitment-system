@@ -146,6 +146,19 @@ def _engine_key(engine: str) -> str:
     return "edge-tts"
 
 
+# ★ 运行时失败记忆：能力检查查不出来的问题（凭证无效、配额用尽、服务端拒绝）
+#   只有真调一次才知道。调失败过就记下来，让 engine_status 后续如实报告。
+_RUNTIME_FAILURES: dict[str, str] = {}
+
+
+def note_runtime_failure(engine: str, reason: str) -> None:
+    _RUNTIME_FAILURES[engine] = (reason or "")[:120]
+
+
+def clear_runtime_failure(engine: str) -> None:
+    _RUNTIME_FAILURES.pop(engine, None)
+
+
 def engine_status() -> list[tuple[str, bool, str]]:
     """返回 [(显示名, 是否可用, 不可用原因)]。
 
@@ -161,13 +174,24 @@ def engine_status() -> list[tuple[str, bool, str]]:
     except ImportError:
         out.append((ENGINE_EDGE, False, "未安装 edge-tts：pip install edge-tts"))
 
-    # 讯飞：三个凭证齐全才算可用
+    # 讯飞：凭证齐全 **且** 上次实调没失败过
+    #
+    # ★ 只查"凭证存不存在"是不够的 —— 实测本机凭证齐全，engine_status() 报
+    #   可用，但真正合成时服务端返回 `licc failed`（授权/配额问题）后被降级到
+    #   edge-tts。结果是：下拉框里明明写着讯飞，出来的却是 edge 的声音，
+    #   而"引擎选择"这个功能看上去是好的。
+    #   这属于本项目反复出现的同一类问题：**能力检查查的是配置，不是能力。**
+    #   凭证有效性没法免费预检（要真发一次请求），所以改为**记住运行时的失败**：
+    #   一旦实调失败过，后续就如实报不可用并带上服务端原文。
     try:
         from .config import settings
-        if settings.xunfei_configured:
-            out.append((ENGINE_XUNFEI, True, ""))
-        else:
+        if not settings.xunfei_configured:
             out.append((ENGINE_XUNFEI, False, ".env 缺 XUNFEI_APP_ID / API_KEY / API_SECRET"))
+        elif _RUNTIME_FAILURES.get(ENGINE_XUNFEI):
+            out.append((ENGINE_XUNFEI, False,
+                        f"凭证已配置，但实际调用失败：{_RUNTIME_FAILURES[ENGINE_XUNFEI]}"))
+        else:
+            out.append((ENGINE_XUNFEI, True, ""))
     except Exception as e:  # noqa: BLE001
         out.append((ENGINE_XUNFEI, False, f"配置读取失败：{e}"))
 
@@ -228,10 +252,12 @@ def synthesize(text: str, engine: str = ENGINE_EDGE, voice: str = None) -> TTSRe
             from .xunfei_tts import generate_xunfei_base64
             b64 = generate_xunfei_base64(text, voice)
             if b64:
+                clear_runtime_failure(ENGINE_XUNFEI)   # 又能用了就恢复
                 return TTSResult(b64, ENGINE_XUNFEI)
             reason = "讯飞返回空音频（凭证或配额问题）"
         except Exception as e:  # noqa: BLE001
             reason = f"讯飞调用异常：{type(e).__name__}: {e}"
+        note_runtime_failure(ENGINE_XUNFEI, reason)
         fb = _try_edge(text, "zh-CN-YunyangNeural")
         if fb.ok:
             fb.fell_back = True
