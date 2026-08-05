@@ -31,6 +31,31 @@ class FlywheelRecord:
     timestamp: float = field(default_factory=time.time)
 
 
+def _iter_issue_dicts(issues):
+    """把 checker_feedback['issues'] 摊成 issue dict 的序列。
+
+    存在的理由是**盘上已有坏数据**，不是无谓的防御：写入方曾经写成
+        [to_dict(r).get("issues", []) for r in checker_results]
+    而 .get("issues") 本身返回 list，于是落盘成了 list[list[dict]]。
+    写入方已修正为平铺（见 pipeline.py 的 checker_feedback），但旧记录
+    还在 sessions/flywheel_records.json 里 —— 不兼容读的话，一条历史记录
+    就能让整条分析链在 _build_graph 阶段崩掉（AttributeError: 'list'
+    object has no attribute 'get'），而用户看到的只是"分析失败"。
+
+    只摊一层：坏数据就是多包了一层，不做任意深度递归 —— 真出现更深的
+    嵌套说明是另一个 bug，应该炸出来而不是被这里悄悄吃掉。
+    """
+    for item in issues or []:
+        if isinstance(item, dict):
+            yield item
+        elif isinstance(item, list):
+            for inner in item:
+                if isinstance(inner, dict):
+                    yield inner
+        # 其它类型（None/str/…）直接跳过：宁可少统计一条历史问题,
+        # 也不要在生成 prompt 注意事项时把整次分析带崩。
+
+
 class FlywheelStore:
     '''
     飞轮存储：向量检索 + JSON 文件（完整记录，持久层）。
@@ -372,7 +397,7 @@ class FlywheelStore:
             if not record.checker_feedback:
                 continue
             issues = record.checker_feedback.get('issues', [])
-            for issue in issues:
+            for issue in _iter_issue_dicts(issues):
                 key = f"{issue.get('dimension')}:{issue.get('description', '')[:60]}"
                 issue_counter[key] = issue_counter.get(key, 0) + 1
 

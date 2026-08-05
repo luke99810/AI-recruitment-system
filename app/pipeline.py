@@ -485,8 +485,23 @@ class RecruitmentPipeline:
             match_result=self.match_result,
             questions=self.questions.get("questions", []),
             checker_feedback=(
-                {"issues": [self.checker.to_dict(r).get("issues", []) for r in self.checker_results]}
-                if self.checker_results else None
+                # ★ 必须**展平**。原来写的是
+                #     [self.checker.to_dict(r).get("issues", []) for r in ...]
+                #   而 .get("issues") 本身就返回一个 list，于是产出
+                #   list[list[dict]] —— 多包了一层。读取方
+                #   flywheel.get_common_checker_issues 按 list[dict] 遍历，
+                #   拿到的 issue 是 list，一执行 issue.get('dimension') 就
+                #   AttributeError，整条分析链在 _build_graph 阶段直接崩。
+                #   语义上这里要的是「这次分析所有轮次的问题合集」，平铺才对。
+                {
+                    "issues": [
+                        issue
+                        for r in self.checker_results
+                        for issue in self.checker.to_dict(r).get("issues", [])
+                    ]
+                }
+                if self.checker_results
+                else None
             ),
             tags=[self.jd_data.get("title", ""), self.resume_data.get("name", "")],
         )
