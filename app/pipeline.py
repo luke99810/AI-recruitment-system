@@ -11,6 +11,7 @@ RecruitmentPipeline：基于 Graph DAG + Harness + Checker + Skills + Flywheel �
 """
 
 import json
+import logging
 import time
 from typing import Any, Optional
 from pathlib import Path
@@ -22,6 +23,8 @@ from .checker import CheckerAgent, CheckerResult, CALIBRATION_DIMENSIONS
 from .skills import SkillRegistry, SkillMerger
 from .flywheel import FlywheelStore, FlywheelRecord
 from .config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class RecruitmentPipeline:
@@ -433,9 +436,29 @@ class RecruitmentPipeline:
                 revised = regenerate(result)
                 if revised:
                     output = revised
+                else:
+                    # 没抛异常但没产出 —— 再转一轮也是同一个 output 重复送检，
+                    # 白烧一次 LLM。记下来并停，别让它空转到 max_rounds。
+                    logger.warning(
+                        "[calibration] %s 第 %d 轮修订返回空，停止修订",
+                        output_type, rnd,
+                    )
+                    self.execution_log.append({
+                        "event": "revision_empty", "output_type": output_type, "round": rnd,
+                    })
+                    break
             except Exception as e:  # noqa: BLE001
+                # ★ 这里曾经只 append 进 execution_log 就 break —— 不打日志。
+                #   后果：修订链路整条挂掉在界面和终端上都看不见，只表现为
+                #   "三轮未过但只有 1 轮记录"，要翻 execution_log 才查得出来。
+                #   校准循环是判分权重最高的一环，它失败必须是显式的。
+                logger.warning(
+                    "[calibration] %s 第 %d 轮修订失败，停止修订：%s: %s",
+                    output_type, rnd, type(e).__name__, e,
+                )
                 self.execution_log.append({
-                    "event": "revision_failed", "round": rnd, "error": str(e),
+                    "event": "revision_failed", "output_type": output_type,
+                    "round": rnd, "error": f"{type(e).__name__}: {e}",
                 })
                 break
 

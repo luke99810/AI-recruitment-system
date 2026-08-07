@@ -12,7 +12,28 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-import fitz  # PyMuPDF
+# ── onnxruntime 必须在 fitz 之前载入，顺序不能反 ──
+#
+# PyMuPDF 一被 import 就把系统的 msvcp140.dll 拉进进程。DLL 在同一进程内
+# 按名字唯一、谁先载入谁生效，之后 onnxruntime 只能用到那一份。
+# 某些 Windows 上 System32 的 msvcp140.dll 停在旧版（实测 14.00.24215.1，
+# 而同机 vcruntime140_1.dll 已是 14.50 —— 被别的安装程序覆盖回去了），
+# onnxruntime 需要 ≥14.4x，于是抛
+#   ImportError: DLL load failed while importing onnxruntime_pybind11_state
+# 整条 OCR 降级路径随之失效：扫描件 PDF 一律解析不出文字。
+#
+# 实测：先 import fitz 再 import onnxruntime → 失败；反过来 → 成功。
+# pdfplumber / cv2 / numpy 都不触发，只有 fitz。
+#
+# 没装 OCR 也不影响：import 失败就置 None，第 3 级自然降级。
+try:
+    import onnxruntime as _onnxruntime  # noqa: F401
+    _OCR_RUNTIME_ERROR: Optional[str] = None
+except Exception as _e:  # pragma: no cover - 取决于宿主环境
+    _onnxruntime = None
+    _OCR_RUNTIME_ERROR = str(_e)
+
+import fitz  # PyMuPDF  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -72,8 +93,30 @@ def _extract_with_pdfplumber(file_bytes: bytes) -> str:
         return ""
 
 
+def ocr_availability() -> tuple[bool, str]:
+    """OCR 这一级到底能不能用，以及不能用的原因。
+
+    区分三种情况，因为它们的处置完全不同：
+      - 没装依赖        → `pip install rapidocr-onnxruntime`
+      - 装了但环境坏     → 宿主机运行库问题（见文件顶部注释），装包解决不了
+      - 可用            → 识别不出文字才是"这份 PDF 不行"
+    只报"OCR 未能识别文字"会把后两种混为一谈，用户按提示换文件也没用。
+    """
+    if _onnxruntime is None:
+        return False, f"onnxruntime 无法载入：{_OCR_RUNTIME_ERROR}"
+    try:
+        import rapidocr_onnxruntime  # noqa: F401
+    except ImportError:
+        return False, "未安装 rapidocr-onnxruntime（可选依赖）"
+    return True, ""
+
+
 def _extract_with_ocr(file_bytes: bytes) -> str:
     """使用 RapidOCR 对扫描件/图片型 PDF 做 OCR 识别。"""
+    ok, reason = ocr_availability()
+    if not ok:
+        logger.warning("[parser] OCR 不可用，跳过第 3 级：%s", reason)
+        return ""
     try:
         from rapidocr_onnxruntime import RapidOCR
         ocr = RapidOCR()
@@ -154,9 +197,16 @@ def parse_document(file_bytes: bytes, filename: str) -> str:
             text = parse_txt(file_bytes)
 
     if not text:
+        ok, reason = ocr_availability()
+        if ext == ".pdf" and not ok:
+            raise ValueError(
+                f"文件 '{filename}' 没有文本层（图片型/扫描件 PDF），"
+                f"而 OCR 当前不可用：{reason}。"
+                f"请改用文字型 PDF 或 .docx/.txt，或先修好 OCR 依赖。"
+            )
         raise ValueError(
             f"文件 '{filename}' 解析后内容为空。"
-            f"该文件可能是图片型/扫描件 PDF，且 OCR 模块未能识别文字，"
+            f"该文件可能是图片型/扫描件 PDF，OCR 已运行但未识别出文字，"
             f"请尝试上传文字型 PDF 或 .docx/.txt 格式简历。"
         )
 

@@ -507,48 +507,18 @@ class CheckerAgent:
         return max(score, 0), issues
 
     # ── 修订闭环 ────────────────────────────────────
-
-    def run_calibration_loop(
-        self,
-        agent_fn,             # fn(feedback: CheckerResult | None) -> dict
-        source_data: dict,
-        output_type: str = "match_result",
-    ) -> tuple[dict, list[CheckerResult]]:
-        """
-        执行完整的校准循环（Loop 2）。
-
-        Args:
-            agent_fn: Agent 修订函数，接受 feedback 参数
-            source_data: 原始数据
-            output_type: 输出类型
-
-        Returns:
-            (final_output, check_history): 最终输出和校验历史
-        """
-        check_history = []
-        feedback = None
-
-        for round_num in range(1, self.max_revision_rounds + 1):
-            # Agent 生成/修订输出
-            agent_output = agent_fn(feedback=feedback)
-
-            # Checker 校验
-            check_result = self.check(
-                agent_output=agent_output,
-                source_data=source_data,
-                output_type=output_type,
-            )
-            check_result.revision_round = round_num
-            check_history.append(check_result)
-
-            if check_result.overall_pass:
-                return agent_output, check_history
-
-            # 准备反馈给下一轮
-            feedback = check_result
-
-        # 超过最大轮数 → 返回最后一轮的输出
-        return agent_output, check_history
+    #
+    # 这里曾有一个 run_calibration_loop，已删除。留这段说明是为了防止它被重建：
+    #
+    #   · 它从未被任何地方调用过（全仓 grep 只有定义处一处），
+    #     真正在跑的闭环是 pipeline.py 的 _run_checker_loop。
+    #   · 它带一个不查就看不出来的 bug：三轮未过时 `return agent_output`
+    #     交的是**最后一轮**。而模型按反馈改 A 问题时把 B 改坏很常见，
+    #     实测轨迹 75→87→80 里最后一轮就不是最好的那一轮。
+    #     pipeline 那版按加权分择优（best_output/best_score），是对的。
+    #
+    # 所以它不是"少调用了的好实现"，而是一个更像正统实现、位置更显眼、
+    # 却会把结果改坏的陷阱。要改校准循环，请改 pipeline.py::_run_checker_loop。
 
     # ── 辅助方法 ────────────────────────────────────
 

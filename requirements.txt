@@ -12,7 +12,21 @@ edge-tts>=6.1.0
 nest-asyncio>=1.5.0
 websocket-client>=1.8.0
 Pillow>=10.0.0
-# 可选：rapidocr-onnxruntime>=1.2.0  (OCR扫描件支持)
+rapidocr-onnxruntime>=1.2.0          # OCR：扫描件/图片型 PDF（可选，见下）
+#
+# ★ 关于 OCR：只有「没有文本层」的 PDF 才会走到它（parser 三级降级的第 3 级）。
+#   不装也能跑 —— 仓库自带的 test_resumes/*.txt 无需 OCR。
+#
+#   Windows 上装了却报
+#     ImportError: DLL load failed while importing onnxruntime_pybind11_state
+#   是宿主机 VC++ 运行库的问题，装包解决不了：System32 的 msvcp140.dll 被
+#   某些安装程序覆盖回旧版（实测 14.00.24215.1，而同机 vcruntime140_1.dll
+#   已是 14.50），而 onnxruntime 需要 ≥14.4x。
+#   修法：重装「Microsoft Visual C++ 2015-2022 x64 可再发行组件包」。
+#
+#   另外 app/parser.py 顶部刻意把 onnxruntime 放在 import fitz 之前 ——
+#   PyMuPDF 会先把旧 msvcp140 锁进进程，顺序反了 OCR 就静默失效。改那段前先读注释。
+#
 chromadb>=0.5.0                      # 飞轮向量库（可选，见下）
 #
 # ★ 关于向量检索：飞轮默认走【内置向量索引】（纯 Python，n-gram 哈希
